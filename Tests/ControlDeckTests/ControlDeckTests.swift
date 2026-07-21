@@ -52,33 +52,37 @@ struct ControlDeckLogicTestRunner {
             ControllerProfile.general.action(for: .cross) == .mouseLeftClick,
             "General Cross clicks"
         )
-        var appSwitcherChord = AppSwitcherChordGate()
-        let deferredSquare = appSwitcherChord.handle(.square, pressed: true)
+        var appSwitcherHold = AppSwitcherHoldGate()
+        let deferredPS = appSwitcherHold.handle(.ps, pressed: true)
         expect(
-            deferredSquare == .deferSquare &&
-                appSwitcherChord.handle(.cross, pressed: true) == .begin &&
-                appSwitcherChord.isActive &&
-                appSwitcherChord.handle(.cross, pressed: false) == .consume &&
-                appSwitcherChord.handle(.cross, pressed: true) == .advance &&
-                appSwitcherChord.handle(.square, pressed: false) == .end &&
-                !appSwitcherChord.isActive,
-            "Square then Cross opens, cycles and closes the app switcher"
+            deferredPS == .deferPS(generation: 1) &&
+                appSwitcherHold.activate(generation: 1) &&
+                appSwitcherHold.isActive &&
+                appSwitcherHold.handle(.r1, pressed: true) == .forward &&
+                appSwitcherHold.handle(.dpadRight, pressed: true) == .forward &&
+                appSwitcherHold.handle(.l1, pressed: true) == .backward &&
+                appSwitcherHold.handle(.dpadLeft, pressed: true) == .backward &&
+                appSwitcherHold.handle(.ps, pressed: false) == .select &&
+                !appSwitcherHold.isActive,
+            "holding PS opens, navigates and selects from the app switcher"
         )
-        var squareTapGate = AppSwitcherChordGate()
-        let squareTap = squareTapGate.handle(.square, pressed: true)
+        var psTapGate = AppSwitcherHoldGate()
+        let psTap = psTapGate.handle(.ps, pressed: true)
         expect(
-            squareTap == .deferSquare &&
-                squareTapGate.handle(.square, pressed: false) ==
-                    .performSquareTap,
-            "a quick Square tap keeps its normal profile action"
+            psTap == .deferPS(generation: 1) &&
+                psTapGate.handle(.ps, pressed: false) == .performPSTap &&
+                !psTapGate.activate(generation: 1),
+            "a quick PS tap keeps its normal focus action"
         )
-        var heldSquareGate = AppSwitcherChordGate()
-        let heldSquare = heldSquareGate.handle(.square, pressed: true)
+        var cancelSwitcherGate = AppSwitcherHoldGate()
+        let cancelPS = cancelSwitcherGate.handle(.ps, pressed: true)
         expect(
-            heldSquare == .deferSquare &&
-                heldSquareGate.handle(.square, pressed: false) ==
-                    .performSquareTap,
-            "a held Square keeps its normal action when no chord is entered"
+            cancelPS == .deferPS(generation: 1) &&
+                cancelSwitcherGate.activate(generation: 1) &&
+                cancelSwitcherGate.handle(.circle, pressed: true) == .cancel &&
+                cancelSwitcherGate.handle(.ps, pressed: false) == .consume &&
+                !cancelSwitcherGate.isActive,
+            "Circle cancels the held-PS app switcher without focusing Codex"
         )
         expect(
             ControllerProfile.codex.gyro.action(for: .shake) ==

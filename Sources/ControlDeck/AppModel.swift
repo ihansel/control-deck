@@ -60,7 +60,8 @@ final class AppModel: ObservableObject {
     private var universalDictationPressed = false
     private var soundGeneration = 0
     private var heldMouseInputs: [ControllerInput: CGMouseButton] = [:]
-    private var appSwitcherChord = AppSwitcherChordGate()
+    private var appSwitcherHold = AppSwitcherHoldGate()
+    private var appSwitcherSafetyGeneration = 0
     private var screenshotEditorCapturedInputs: Set<ControllerInput> = []
     private var tutorialCapturedInputs: Set<ControllerInput> = []
     private var optionsPressed = false
@@ -582,7 +583,7 @@ final class AppModel: ObservableObject {
     private func handleButton(
         _ input: ControllerInput,
         pressed: Bool,
-        allowAppSwitcherChord: Bool = true
+        allowAppSwitcherHold: Bool = true
     ) {
         if !pressed, screenshotEditorCapturedInputs.remove(input) != nil {
             if input == .cross {
@@ -624,19 +625,16 @@ final class AppModel: ObservableObject {
             }
             return
         }
+        if allowAppSwitcherHold,
+           handleAppSwitcherHold(input, pressed: pressed) {
+            return
+        }
         if input == .options {
-            if pressed, appSwitcherChord.cancel() {
-                _ = automation.endAppSwitcher()
-            }
             handleOptionsButton(pressed: pressed)
             return
         }
         if input == .create {
             handleCreateButton(pressed: pressed)
-            return
-        }
-        if allowAppSwitcherChord,
-           handleAppSwitcherChord(input, pressed: pressed) {
             return
         }
         if optionsPressed {
@@ -715,53 +713,50 @@ final class AppModel: ObservableObject {
         execute(action, source: input.label)
     }
 
-    private func handleAppSwitcherChord(
+    private func handleAppSwitcherHold(
         _ input: ControllerInput,
         pressed: Bool
     ) -> Bool {
-        guard !optionsPressed || appSwitcherChord.isActive else {
-            return false
-        }
-        switch appSwitcherChord.handle(input, pressed: pressed) {
+        switch appSwitcherHold.handle(input, pressed: pressed) {
         case .passThrough:
             return false
-        case .deferSquare:
-            break
-        case .performSquareTap:
-            handleButton(
-                .square,
-                pressed: true,
-                allowAppSwitcherChord: false
-            )
-            handleButton(
-                .square,
-                pressed: false,
-                allowAppSwitcherChord: false
-            )
-        case .begin:
-            if automation.beginAppSwitcher() {
-                lastAction = "App switcher · release Square to select"
-                hud.show(
-                    "App switcher",
-                    detail: "Tap Cross to move · release Square to select",
-                    color: .systemBlue
-                )
-                controller.playHaptic(.selection)
-            } else {
-                _ = appSwitcherChord.cancel()
-                feedbackFailure(automation.lastResult)
+        case let .deferPS(generation):
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+                [weak self] in
+                guard let self,
+                      self.appSwitcherHold.activate(generation: generation)
+                else {
+                    return
+                }
+                self.beginAppSwitcherHold()
             }
-        case .advance:
+        case .performPSTap:
+            handleButton(
+                .ps,
+                pressed: true,
+                allowAppSwitcherHold: false
+            )
+            handleButton(
+                .ps,
+                pressed: false,
+                allowAppSwitcherHold: false
+            )
+        case .forward:
             if automation.advanceAppSwitcher() {
                 lastAction = "App switcher · next application"
                 controller.playHaptic(.selection)
             } else {
-                if appSwitcherChord.cancel() {
-                    _ = automation.endAppSwitcher()
-                }
-                feedbackFailure(automation.lastResult)
+                failAppSwitcherHold(automation.lastResult)
             }
-        case .end:
+        case .backward:
+            if automation.reverseAppSwitcher() {
+                lastAction = "App switcher · previous application"
+                controller.playHaptic(.selection)
+            } else {
+                failAppSwitcherHold(automation.lastResult)
+            }
+        case .select:
+            appSwitcherSafetyGeneration += 1
             let succeeded = automation.endAppSwitcher()
             lastAction = succeeded
                 ? "Application selected"
@@ -771,10 +766,66 @@ final class AppModel: ObservableObject {
             } else {
                 feedbackFailure(automation.lastResult)
             }
+        case .cancel:
+            appSwitcherSafetyGeneration += 1
+            let succeeded = automation.cancelAppSwitcher()
+            lastAction = succeeded
+                ? "App switcher cancelled"
+                : automation.lastResult
+            if succeeded {
+                hud.show("App switcher cancelled", color: .systemGray)
+                controller.playHaptic(.selection)
+            } else {
+                feedbackFailure(automation.lastResult)
+            }
         case .consume:
             break
         }
         return true
+    }
+
+    private func beginAppSwitcherHold() {
+        guard automation.beginAppSwitcher() else {
+            failAppSwitcherHold(automation.lastResult)
+            return
+        }
+        appSwitcherSafetyGeneration += 1
+        let safetyGeneration = appSwitcherSafetyGeneration
+        lastAction = "App switcher · release PS to select"
+        hud.show(
+            "App switcher",
+            detail: "L1 / Left back · R1 / Right forward · Circle cancels",
+            color: .systemBlue
+        )
+        controller.playHaptic(.selection)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+            [weak self] in
+            guard let self,
+                  self.appSwitcherSafetyGeneration == safetyGeneration,
+                  self.appSwitcherHold.isActive
+            else {
+                return
+            }
+            _ = self.appSwitcherHold.cancel()
+            _ = self.automation.cancelAppSwitcher()
+            self.appSwitcherSafetyGeneration += 1
+            self.lastAction = "App switcher timed out safely"
+            self.hud.show(
+                "App switcher closed",
+                detail: "Hold PS again to reopen it",
+                color: .systemGray
+            )
+            self.controller.playHaptic(.warning)
+        }
+    }
+
+    private func failAppSwitcherHold(_ message: String) {
+        appSwitcherSafetyGeneration += 1
+        if appSwitcherHold.cancel() {
+            _ = automation.cancelAppSwitcher()
+        }
+        feedbackFailure(message)
     }
 
     private func mouseButton(for action: MappedAction) -> CGMouseButton? {
@@ -1481,8 +1532,9 @@ final class AppModel: ObservableObject {
     }
 
     private func controllerTransportChanged(_ transport: ControllerTransport) {
-        if appSwitcherChord.cancel() {
-            _ = automation.endAppSwitcher()
+        appSwitcherSafetyGeneration += 1
+        if appSwitcherHold.cancel() {
+            _ = automation.cancelAppSwitcher()
         }
         if transport == .unknown, universalDictationActive {
             universalDictationActive = false
@@ -1621,8 +1673,9 @@ final class AppModel: ObservableObject {
             universalDictationPressed = false
             _ = automation.toggleSystemDictation()
         }
-        if appSwitcherChord.cancel() {
-            _ = automation.endAppSwitcher()
+        appSwitcherSafetyGeneration += 1
+        if appSwitcherHold.cancel() {
+            _ = automation.cancelAppSwitcher()
         }
         controller.stop()
         bluetoothMicrophone.teardown()

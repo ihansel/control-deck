@@ -84,7 +84,7 @@ The supplied Codex profile is designed around a simple physical vocabulary:
 | Focus Codex | PS button |
 | Show the current profile and mappings | Touchpad click |
 | Toggle hands-free dictation | Microphone button |
-| Switch applications | Hold Square, tap Cross, release Square to select |
+| Switch applications | Hold PS; L1/R1 or D-pad to move; release PS to select; Circle cancels |
 
 Hold **Options** for the profile wheel. Point the **left stick** toward one of
 eight app logos, then release Options to switch. The defaults are Codex, Chrome,

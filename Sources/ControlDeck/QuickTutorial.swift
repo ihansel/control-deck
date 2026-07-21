@@ -512,7 +512,7 @@ struct QuickTutorialView: View {
         case .ready:
             [
                 .init(control: "Touchpad click", action: "Show context", detail: "See the current profile and important mappings at any time."),
-                .init(control: "Square + Cross", action: "Switch apps", detail: "Hold Square, tap Cross to move, then release Square to select."),
+                .init(control: "Hold PS", action: "Switch apps", detail: "Use L1/R1 or D-pad Left/Right, release PS to select, or Circle to cancel."),
                 .init(control: "Setup", action: "Replay tutorial", detail: "This walkthrough always remains available here.")
             ]
         case .advanced:

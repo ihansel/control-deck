@@ -495,7 +495,7 @@ private struct ContextControllerOverlay: View {
                 }
                 Text("Hold Create + move the right stick to adjust reasoning")
                     .font(.caption.weight(.medium))
-                Text("Hold Square + tap Cross to switch apps; release Square to select")
+                Text("Hold PS · L1/R1 or D-pad to move · release PS to select")
                     .font(.caption.weight(.medium))
             }
         }

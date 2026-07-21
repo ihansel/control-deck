@@ -82,61 +82,88 @@ enum ControllerInput: String, Codable, CaseIterable, Identifiable, Hashable, Sen
     }
 }
 
-enum AppSwitcherChordResponse: Equatable, Sendable {
+enum AppSwitcherHoldResponse: Equatable, Sendable {
     case passThrough
-    case deferSquare
-    case performSquareTap
-    case begin
-    case advance
-    case end
+    case deferPS(generation: Int)
+    case performPSTap
+    case forward
+    case backward
+    case select
+    case cancel
     case consume
 }
 
-struct AppSwitcherChordGate: Sendable {
+struct AppSwitcherHoldGate: Sendable {
     private(set) var isActive = false
-    private var squarePressed = false
-    private var squarePending = false
+    private var psPressed = false
+    private var psTapPending = false
+    private var generation = 0
 
     mutating func handle(
         _ input: ControllerInput,
         pressed: Bool
-    ) -> AppSwitcherChordResponse {
-        if input == .square {
+    ) -> AppSwitcherHoldResponse {
+        if input == .ps {
             if pressed {
-                squarePressed = true
-                squarePending = true
-                return .deferSquare
+                guard !psPressed else { return .consume }
+                psPressed = true
+                psTapPending = true
+                generation += 1
+                return .deferPS(generation: generation)
             }
 
-            squarePressed = false
+            psPressed = false
+            generation += 1
             if isActive {
                 isActive = false
-                squarePending = false
-                return .end
+                psTapPending = false
+                return .select
             }
-            if squarePending {
-                squarePending = false
-                return .performSquareTap
+            if psTapPending {
+                psTapPending = false
+                return .performPSTap
             }
-            return .passThrough
+            return .consume
         }
 
-        guard input == .cross else { return .passThrough }
-        if isActive {
-            return pressed ? .advance : .consume
+        guard isActive else {
+            return psPressed ? .consume : .passThrough
         }
-        guard pressed, squarePressed, squarePending else {
-            return .passThrough
+
+        guard pressed else { return .consume }
+        switch input {
+        case .r1, .dpadRight:
+            return .forward
+        case .l1, .dpadLeft:
+            return .backward
+        case .circle:
+            isActive = false
+            psTapPending = false
+            generation += 1
+            return .cancel
+        default:
+            return .consume
         }
-        squarePending = false
+    }
+
+    mutating func activate(generation expected: Int) -> Bool {
+        guard psPressed,
+              psTapPending,
+              generation == expected,
+              !isActive
+        else {
+            return false
+        }
+        psTapPending = false
         isActive = true
-        return .begin
+        return true
     }
 
     mutating func cancel() -> Bool {
         let shouldReleaseCommand = isActive
-        squarePressed = false
-        squarePending = false
+        generation += 1
+        psPressed = false
+        psTapPending = false
         isActive = false
         return shouldReleaseCommand
     }

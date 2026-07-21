@@ -537,7 +537,7 @@ final class CodexAutomation: ObservableObject {
             return false
         }
         appSwitcherModifierHeld = true
-        guard postAppSwitcherTab() else {
+        guard postAppSwitcherTab(reverse: false) else {
             _ = endAppSwitcher()
             return false
         }
@@ -550,8 +550,18 @@ final class CodexAutomation: ObservableObject {
         guard appSwitcherModifierHeld else {
             return beginAppSwitcher()
         }
-        guard postAppSwitcherTab() else { return false }
+        guard postAppSwitcherTab(reverse: false) else { return false }
         lastResult = "Next application"
+        return true
+    }
+
+    @discardableResult
+    func reverseAppSwitcher() -> Bool {
+        guard appSwitcherModifierHeld else {
+            return beginAppSwitcher()
+        }
+        guard postAppSwitcherTab(reverse: true) else { return false }
+        lastResult = "Previous application"
         return true
     }
 
@@ -563,6 +573,23 @@ final class CodexAutomation: ObservableObject {
         lastResult = succeeded
             ? "Application selected"
             : "Could not close app switcher"
+        return succeeded
+    }
+
+    @discardableResult
+    func cancelAppSwitcher() -> Bool {
+        guard appSwitcherModifierHeld else { return true }
+        let escaped = key(
+            kVK_Escape,
+            flags: .maskCommand,
+            focusCodex: false
+        )
+        let released = postKeyState(kVK_Command, keyDown: false)
+        appSwitcherModifierHeld = false
+        let succeeded = escaped && released
+        lastResult = succeeded
+            ? "App switcher cancelled"
+            : "Could not cancel app switcher"
         return succeeded
     }
 
@@ -651,8 +678,11 @@ final class CodexAutomation: ObservableObject {
         return true
     }
 
-    private func postAppSwitcherTab() -> Bool {
-        key(kVK_Tab, flags: .maskCommand, focusCodex: false)
+    private func postAppSwitcherTab(reverse: Bool) -> Bool {
+        let flags: CGEventFlags = reverse
+            ? [.maskCommand, .maskShift]
+            : .maskCommand
+        return key(kVK_Tab, flags: flags, focusCodex: false)
     }
 
     private var frontmostBundleIdentifier: String? {
