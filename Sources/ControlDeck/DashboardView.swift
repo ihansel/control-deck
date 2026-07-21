@@ -5,7 +5,9 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
     case dashboard
     case controller
     case touchpad
+    case gyro
     case pointer
+    case screenCapture
     case shiftLayer
     case profiles
     case customize
@@ -18,7 +20,9 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
         case .dashboard: "ControlDeck"
         case .controller: "Button Mapping"
         case .touchpad: "Touchpad"
+        case .gyro: "Gyro"
         case .pointer: "Pointer"
+        case .screenCapture: "Screen Capture"
         case .shiftLayer: "Shift Layer"
         case .profiles: "Profiles"
         case .customize: "Customize with Codex"
@@ -31,7 +35,9 @@ private enum DashboardSection: String, CaseIterable, Identifiable {
         case .dashboard: "rectangle.grid.2x2"
         case .controller: "gamecontroller"
         case .touchpad: "hand.draw"
+        case .gyro: "gyroscope"
         case .pointer: "cursorarrow.motionlines"
+        case .screenCapture: "viewfinder.rectangular"
         case .shiftLayer: "circle.hexagongrid.fill"
         case .profiles: "square.stack.3d.up"
         case .customize: "sparkles"
@@ -49,6 +55,8 @@ struct DashboardView: View {
     @ObservedObject private var automation: CodexAutomation
     @ObservedObject private var codexExtension: CodexExtensionService
     @ObservedObject private var shiftLayer: ShiftLayerStore
+    @ObservedObject private var screenCapture: ScreenCapturePreferences
+    @ObservedObject private var tutorial: QuickTutorialStore
     @State private var section: DashboardSection = .dashboard
     @State private var selectedInput: ControllerInput = .cross
     @State private var customizationRequest =
@@ -67,6 +75,10 @@ struct DashboardView: View {
             wrappedValue: model.codexExtension
         )
         _shiftLayer = ObservedObject(wrappedValue: model.shiftLayer)
+        _screenCapture = ObservedObject(
+            wrappedValue: model.screenCapturePreferences
+        )
+        _tutorial = ObservedObject(wrappedValue: model.tutorial)
     }
 
     var body: some View {
@@ -80,6 +92,18 @@ struct DashboardView: View {
             maxHeight: .infinity
         )
         .preferredColorScheme(.light)
+        .sheet(
+            isPresented: Binding(
+                get: { tutorial.isPresented },
+                set: { presented in
+                    if !presented, tutorial.isPresented { tutorial.skip() }
+                }
+            )
+        ) {
+            QuickTutorialView(store: tutorial) { destination in
+                openTutorialDestination(destination)
+            }
+        }
     }
 
     private var availableSections: [DashboardSection] {
@@ -139,7 +163,14 @@ struct DashboardView: View {
                         }
                         .foregroundStyle(.primary)
                         .padding(.horizontal, 14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .frame(height: 56)
+                        .contentShape(
+                            RoundedRectangle(
+                                cornerRadius: 10,
+                                style: .continuous
+                            )
+                        )
                         .background(
                             section == item
                                 ? Color.accentColor.opacity(0.12)
@@ -154,6 +185,7 @@ struct DashboardView: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
                 }
             }
             .padding(.horizontal, 12)
@@ -195,19 +227,10 @@ struct DashboardView: View {
 
             Image(systemName: "battery.75percent")
                 .font(.system(size: 20, weight: .medium))
-            Image(systemName: "bolt.fill")
-                .font(.system(size: 12, weight: .semibold))
-
-            Button {} label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .background(
-                        Color(nsColor: .controlBackgroundColor),
-                        in: Circle()
-                    )
+            if controller.isCharging {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 12, weight: .semibold))
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 24)
         .frame(height: 46)
@@ -247,8 +270,10 @@ struct DashboardView: View {
         case .dashboard: "Controller status and shortcuts."
         case .controller: "Select a control on the photo, then choose exactly what it should do."
         case .touchpad: "Tune pointer tracking, scrolling and gestures."
+        case .gyro: "Configure motion gestures and test controller tilt."
         case .pointer: "Adjust analogue stick pointer behaviour."
-        case .shiftLayer: "Configure the Options menu and reasoning control."
+        case .screenCapture: "Control clipboard and annotation editor behaviour."
+        case .shiftLayer: "Configure the Options profile wheel and reasoning control."
         case .profiles: "Switch and customise mappings by application."
         case .customize: "Ask Codex to change profiles or extend controller behaviour."
         case .setup: "Connect, grant permissions and test your controller."
@@ -264,8 +289,12 @@ struct DashboardView: View {
             buttonMappings
         case .touchpad:
             touchpadSettings
+        case .gyro:
+            gyroSettings
         case .pointer:
             pointerSettings
+        case .screenCapture:
+            screenCaptureSettings
         case .shiftLayer:
             shiftLayerSettings
         case .profiles:
@@ -535,37 +564,303 @@ struct DashboardView: View {
         }
     }
 
-    private var shiftLayerSettings: some View {
+    private var gyroSettings: some View {
         VStack(alignment: .leading, spacing: 18) {
+            profileStrip
+
             GroupBox {
                 HStack(spacing: 22) {
                     ZStack {
                         Circle()
-                            .fill(Color.accentColor.opacity(0.13))
-                            .frame(width: 96, height: 96)
-                        Image(systemName: "circle.hexagongrid.fill")
-                            .font(.system(size: 46, weight: .medium))
-                            .foregroundStyle(Color.accentColor)
+                            .fill(Color.indigo.opacity(0.13))
+                            .frame(width: 92, height: 92)
+                        Image(systemName: "gyroscope")
+                            .font(.system(size: 44, weight: .medium))
+                            .foregroundStyle(Color.indigo)
                     }
                     VStack(alignment: .leading, spacing: 7) {
-                        Text("Hold Options for the command wheel")
+                        Text("Motion controls")
                             .font(.title3.weight(.semibold))
                         Text(
-                            "Normal controls stay unchanged. Hold Options, " +
-                            "then press a D-pad direction for a custom skill " +
-                            "or a face button for an immediate Codex command."
+                            "A deliberate hard shake asks before clearing the " +
+                            "focused text field. Every other motion gesture is " +
+                            "available but unassigned by default."
                         )
                         .foregroundStyle(.secondary)
-                        Text("Tap Options normally to keep its profile action.")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
+                        Label(
+                            controller.motionAvailable
+                                ? "Motion sensors connected"
+                                : "This controller is not reporting motion",
+                            systemImage: controller.motionAvailable
+                                ? "checkmark.circle.fill"
+                                : "exclamationmark.triangle"
+                        )
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(
+                            controller.motionAvailable ? Color.green : Color.orange
+                        )
                     }
                     Spacer()
                 }
                 .padding(10)
             }
 
-            GroupBox("Immediate commands") {
+            GroupBox("Detection") {
+                VStack(alignment: .leading, spacing: 14) {
+                    Toggle(
+                        "Enable gyro gestures for this profile",
+                        isOn: Binding(
+                            get: { profiles.editingProfile.gyro.enabled },
+                            set: { profiles.updateGyroEnabled($0) }
+                        )
+                    )
+                    LabeledSlider(
+                        label: "Shake force",
+                        value: Binding(
+                            get: {
+                                profiles.editingProfile.gyro.shakeThreshold
+                            },
+                            set: { profiles.updateShakeThreshold($0) }
+                        ),
+                        range: 1.4...3.6,
+                        valueText: { String(format: "%.2f g", $0) }
+                    )
+                    LabeledSlider(
+                        label: "Tilt angle",
+                        value: Binding(
+                            get: {
+                                profiles.editingProfile.gyro.tiltThreshold
+                            },
+                            set: { profiles.updateTiltThreshold($0) }
+                        ),
+                        range: 0.45...0.88,
+                        valueText: {
+                            "\(Int(asin(min($0, 1)) * 180 / .pi))°"
+                        }
+                    )
+                    LabeledSlider(
+                        label: "Twist speed",
+                        value: Binding(
+                            get: {
+                                profiles.editingProfile.gyro.rotationThreshold
+                            },
+                            set: { profiles.updateRotationThreshold($0) }
+                        ),
+                        range: 1.5...6.0,
+                        valueText: { String(format: "%.1f rad/s", $0) }
+                    )
+
+                    GyroTelemetryMeters(telemetry: model.gyroTelemetry)
+                }
+                .padding(8)
+            }
+
+            GroupBox("Gesture actions") {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text(
+                            "Suggested mappings are optional. Reset restores " +
+                            "the single shake-to-delete default."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Apply suggested set") {
+                            profiles.applySuggestedGyroMappings()
+                        }
+                        Button("Reset to shake only") {
+                            profiles.resetGyroToShakeOnly()
+                        }
+                    }
+
+                    LazyVGrid(
+                        columns: [GridItem(.flexible()), GridItem(.flexible())],
+                        spacing: 10
+                    ) {
+                        ForEach(GyroGesture.allCases) { gesture in
+                            HStack(spacing: 10) {
+                                Image(systemName: gesture.systemImage)
+                                    .foregroundStyle(Color.indigo)
+                                    .frame(width: 24)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(gesture.label)
+                                        .lineLimit(1)
+                                    Text("Suggested: \(gesture.suggestedAction.label)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                ActionPicker(
+                                    selection: Binding(
+                                        get: {
+                                            profiles.editingProfile.gyro.action(
+                                                for: gesture
+                                            )
+                                        },
+                                        set: {
+                                            profiles.setGyroAction($0, for: gesture)
+                                        }
+                                    )
+                                )
+                                .frame(width: 205)
+                            }
+                            .padding(.vertical, 3)
+                        }
+                    }
+                }
+                .padding(8)
+            }
+
+            GroupBox("Motion playground") {
+                GyroMiniGameView(model: model)
+            }
+        }
+    }
+
+    private var screenCaptureSettings: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            GroupBox {
+                HStack(spacing: 24) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(Color.cyan.opacity(0.13))
+                            .frame(width: 112, height: 88)
+                        Image(systemName: "viewfinder.rectangular")
+                            .font(.system(size: 45, weight: .medium))
+                            .foregroundStyle(Color.cyan)
+                        Image(systemName: "highlighter")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(Color.yellow)
+                            .offset(x: 34, y: 27)
+                    }
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Capture, copy, then annotate")
+                            .font(.title3.weight(.semibold))
+                        Text(
+                            "Hold R2 and move the left stick to select an " +
+                            "area. The original is copied immediately, then " +
+                            "the editor opens with controller-friendly tools."
+                        )
+                        .foregroundStyle(.secondary)
+                        Label(
+                            "Circle dismisses instantly without changing the original",
+                            systemImage: "circle"
+                        )
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(10)
+            }
+
+            GroupBox("After capture") {
+                VStack(alignment: .leading, spacing: 14) {
+                    Toggle(
+                        "Copy the original image to the clipboard",
+                        isOn: $screenCapture.copyOriginalToClipboard
+                    )
+                    Toggle(
+                        "Open the annotation editor immediately",
+                        isOn: $screenCapture.openEditorAfterCapture
+                    )
+                    Toggle(
+                        "Copy the edited image when I choose Done",
+                        isOn: $screenCapture.copyEditedImageOnDone
+                    )
+                    .disabled(!screenCapture.openEditorAfterCapture)
+                    Toggle(
+                        "Keep the editor above other windows",
+                        isOn: $screenCapture.editorStaysOnTop
+                    )
+                    .disabled(!screenCapture.openEditorAfterCapture)
+                    Toggle(
+                        "Return to the previous app after closing the editor",
+                        isOn: $screenCapture.returnToPreviousApp
+                    )
+                    .disabled(!screenCapture.openEditorAfterCapture)
+
+                    if !screenCapture.openEditorAfterCapture &&
+                        !screenCapture.copyOriginalToClipboard {
+                        Label(
+                            "With the editor disabled, ControlDeck still copies " +
+                            "the capture so it is not lost.",
+                            systemImage: "info.circle"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(8)
+            }
+
+            GroupBox("Editor defaults") {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 20) {
+                        Picker(
+                            "Starting tool",
+                            selection: $screenCapture.defaultTool
+                        ) {
+                            ForEach(ScreenshotEditorTool.allCases) { tool in
+                                Label(tool.label, systemImage: tool.systemImage)
+                                    .tag(tool)
+                            }
+                        }
+                        Picker(
+                            "Line size",
+                            selection: $screenCapture.defaultStrokeSize
+                        ) {
+                            ForEach(ScreenshotStrokeSize.allCases) { size in
+                                Text(size.label).tag(size)
+                            }
+                        }
+                    }
+
+                    HStack(spacing: 12) {
+                        Text("Starting colour")
+                            .frame(width: 110, alignment: .leading)
+                        ForEach(ScreenshotAnnotationColor.allCases) { color in
+                            Button {
+                                screenCapture.defaultColor = color
+                            } label: {
+                                Circle()
+                                    .fill(color.color)
+                                    .frame(width: 28, height: 28)
+                                    .overlay {
+                                        Circle().stroke(
+                                            screenCapture.defaultColor == color
+                                                ? Color.accentColor
+                                                : Color.primary.opacity(0.18),
+                                            lineWidth:
+                                                screenCapture.defaultColor == color
+                                                ? 3 : 1
+                                        )
+                                    }
+                            }
+                            .buttonStyle(.plain)
+                            .help(color.label)
+                        }
+                    }
+
+                    HStack {
+                        Text(
+                            "Highlight, draw, add arrows, boxes or text, and " +
+                            "redact sensitive areas. Undo, redo, copy and save " +
+                            "are always available."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Restore defaults") {
+                            screenCapture.reset()
+                        }
+                    }
+                }
+                .padding(8)
+            }
+
+            GroupBox("Controller shortcuts in the editor") {
                 LazyVGrid(
                     columns: [
                         GridItem(.flexible()),
@@ -575,88 +870,141 @@ struct DashboardView: View {
                     ],
                     spacing: 10
                 ) {
-                    ForEach(ShiftFaceCommand.allCases) { command in
-                        VStack(spacing: 7) {
-                            Text("Options + \(command.input.shortLabel)")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.secondary)
-                            Text(command.title)
-                                .font(.headline)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 68)
-                        .background(
-                            Color.accentColor.opacity(0.08),
-                            in: RoundedRectangle(
-                                cornerRadius: 12,
-                                style: .continuous
-                            )
-                        )
-                    }
+                    captureShortcut("Left stick", "Move pointer")
+                    captureShortcut("Cross", "Draw or place")
+                    captureShortcut("L1 / R1", "Previous / next tool")
+                    captureShortcut("Square / Triangle", "Undo / redo")
+                    captureShortcut("Touchpad click", "Copy edited image")
+                    captureShortcut("Create", "Save PNG")
+                    captureShortcut("Options", "Done")
+                    captureShortcut("Circle", "Dismiss")
                 }
                 .padding(8)
             }
+        }
+    }
 
-            GroupBox("Custom skill slots") {
+    private func captureShortcut(_ control: String, _ action: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(control)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.accentColor)
+            Text(action)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+        )
+    }
+
+    private var shiftLayerSettings: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            GroupBox {
+                HStack(spacing: 22) {
+                    ProfileWheelSettingsPreview(
+                        profiles: profiles.profiles,
+                        slots: shiftLayer.profileSlots
+                    )
+                    .frame(width: 178, height: 178)
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Hold Options for the profile wheel")
+                            .font(.title3.weight(.semibold))
+                        Text(
+                            "Move the left stick toward one of eight app " +
+                            "profiles, then release Options to switch. Each " +
+                            "step has a light haptic so it works by feel."
+                        )
+                        .foregroundStyle(.secondary)
+                        Text(
+                            "A quick Options tap still performs its normal " +
+                            "mapped action."
+                        )
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(10)
+            }
+
+            GroupBox("Profile wheel slots") {
                 VStack(spacing: 14) {
-                    ForEach(SkillDirection.allCases) { direction in
-                        let slot = shiftLayer.slot(for: direction)
-                        VStack(alignment: .leading, spacing: 9) {
-                            HStack {
-                                Text("Options + \(direction.arrow)")
+                    LazyVGrid(
+                        columns: [
+                            GridItem(.flexible()),
+                            GridItem(.flexible())
+                        ],
+                        spacing: 12
+                    ) {
+                        ForEach(shiftLayer.profileSlots) { slot in
+                            let profile = profiles.profile(
+                                for: slot.profileKind
+                            )
+                            HStack(spacing: 12) {
+                                Text("\(slot.position + 1)")
                                     .font(.caption.weight(.bold))
-                                    .frame(width: 94, alignment: .leading)
-                                TextField(
-                                    "Skill name",
-                                    text: Binding(
-                                        get: {
-                                            shiftLayer.slot(
-                                                for: direction
-                                            ).title
-                                        },
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 24, height: 24)
+                                    .background(
+                                        Color.primary.opacity(0.06),
+                                        in: Circle()
+                                    )
+                                ProfileLogoView(profile: profile, size: 38)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(profile.name)
+                                        .font(.headline)
+                                    Text(slot.positionLabel)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Picker(
+                                    "Profile for \(slot.positionLabel)",
+                                    selection: Binding(
+                                        get: { slot.profileKind },
                                         set: {
-                                            shiftLayer.updateTitle(
+                                            shiftLayer.setProfile(
                                                 $0,
-                                                for: direction
+                                                at: slot.position
                                             )
                                         }
                                     )
-                                )
-                            }
-                            TextEditor(
-                                text: Binding(
-                                    get: {
-                                        shiftLayer.slot(
-                                            for: direction
-                                        ).prompt
-                                    },
-                                    set: {
-                                        shiftLayer.updatePrompt(
-                                            $0,
-                                            for: direction
+                                ) {
+                                    ForEach(profiles.profiles) { candidate in
+                                        Label(
+                                            candidate.name,
+                                            systemImage:
+                                                candidate.kind.systemImage
                                         )
+                                        .tag(candidate.kind)
                                     }
-                                )
-                            )
-                            .font(.body)
-                            .frame(minHeight: 58)
-                            .scrollContentBackground(.hidden)
-                            .padding(7)
+                                }
+                                .labelsHidden()
+                                .frame(width: 130)
+                            }
+                            .padding(12)
                             .background(
-                                Color(nsColor: .textBackgroundColor),
+                                Color(nsColor: .controlBackgroundColor),
                                 in: RoundedRectangle(
-                                    cornerRadius: 8,
+                                    cornerRadius: 13,
                                     style: .continuous
                                 )
                             )
-                            .accessibilityLabel("\(slot.title) prompt")
-                        }
-                        if direction != SkillDirection.allCases.last {
-                            Divider()
                         }
                     }
                     HStack {
+                        Text(
+                            "Choosing a profile already on the wheel swaps " +
+                            "the two slots. The wheel always stays at eight."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         Spacer()
-                        Button("Reset skill slots") {
+                        Button("Reset popular apps") {
                             shiftLayer.reset()
                         }
                     }
@@ -689,7 +1037,7 @@ struct DashboardView: View {
                                 .font(.headline)
                             Text(
                                 "Shows the active profile, selected Codex " +
-                                "task, primary mappings, and shifted controls."
+                                "task, primary mappings, and profile wheel."
                             )
                             .foregroundStyle(.secondary)
                         }
@@ -1048,6 +1396,45 @@ struct DashboardView: View {
                 }
             }
 
+            GroupBox("Optional · about 3 minutes") {
+                HStack(spacing: 18) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.accentColor.opacity(0.12))
+                            .frame(width: 68, height: 68)
+                        Image(systemName: "gamecontroller.fill")
+                            .font(.system(size: 31, weight: .medium))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 8) {
+                            Text("Take the quick controller tutorial")
+                                .font(.headline)
+                            if tutorial.hasCompleted {
+                                Label(
+                                    "Completed",
+                                    systemImage: "checkmark.circle.fill"
+                                )
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.green)
+                            }
+                        }
+                        Text(
+                            "Learn pointer, scrolling, dictation, screen " +
+                            "capture and profile switching, then see where " +
+                            "the optional advanced controls live."
+                        )
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(tutorial.hasCompleted ? "Replay tutorial" : "Start tutorial") {
+                        tutorial.start()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding(10)
+            }
+
             SetupStep(
                 number: 6,
                 title: "Wireless controller microphone",
@@ -1192,6 +1579,31 @@ struct DashboardView: View {
                         model.microphoneDiagnosticRunning
                 )
             }
+        }
+        .onAppear {
+            if setupCompletionCount == 5 {
+                tutorial.offerIfNeeded()
+            }
+        }
+        .onChange(of: setupCompletionCount) { _, completed in
+            if completed == 5 {
+                tutorial.offerIfNeeded()
+            }
+        }
+    }
+
+    private func openTutorialDestination(
+        _ destination: QuickTutorialDestination
+    ) {
+        switch destination {
+        case .buttonMapping: section = .controller
+        case .touchpad: section = .touchpad
+        case .pointer: section = .pointer
+        case .screenCapture: section = .screenCapture
+        case .shiftLayer: section = .shiftLayer
+        case .profiles: section = .profiles
+        case .gyro: section = .gyro
+        case .customize: section = .customize
         }
     }
 
@@ -1355,6 +1767,52 @@ private struct SetupStep<Accessory: View>: View {
             Color(nsColor: .controlBackgroundColor),
             in: RoundedRectangle(cornerRadius: 14)
         )
+    }
+}
+
+private struct ProfileWheelSettingsPreview: View {
+    let profiles: [ControllerProfile]
+    let slots: [ProfileWheelSlot]
+
+    var body: some View {
+        GeometryReader { proxy in
+            let radius = min(proxy.size.width, proxy.size.height) * 0.36
+            ZStack {
+                Circle()
+                    .fill(
+                        Color(red: 0.07, green: 0.1, blue: 0.13)
+                            .opacity(0.94)
+                    )
+                Circle()
+                    .stroke(Color.accentColor.opacity(0.42), lineWidth: 2)
+                Circle()
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .frame(
+                        width: proxy.size.width * 0.32,
+                        height: proxy.size.height * 0.32
+                    )
+                    .overlay {
+                        Image(systemName: "l.joystick.tilt.up")
+                            .foregroundStyle(Color.accentColor)
+                    }
+
+                ForEach(slots) { slot in
+                    if let profile = profiles.first(where: {
+                        $0.kind == slot.profileKind
+                    }) {
+                        let radians = (-90 + Double(slot.position * 45)) *
+                            .pi / 180
+                        ProfileLogoView(profile: profile, size: 27)
+                            .offset(
+                                x: cos(radians) * radius,
+                                y: sin(radians) * radius
+                            )
+                    }
+                }
+            }
+            .padding(6)
+        }
+        .accessibilityLabel("Eight-slot profile wheel preview")
     }
 }
 

@@ -22,6 +22,7 @@ final class ProfileStore: ObservableObject {
     private let expandedProfileCatalogKey = "expandedProfileCatalog.v1"
     private var activationObserver: NSObjectProtocol?
     private var contextTimer: Timer?
+    private var wheelOverrideBundleIdentifier: String?
     private let logger = Logger(
         subsystem: "com.ianhansel.controldeck",
         category: "profiles"
@@ -136,6 +137,13 @@ final class ProfileStore: ObservableObject {
         logger.notice("Manual profile selected: \(kind.rawValue)")
     }
 
+    func setActiveProfileFromWheel(_ kind: ProfileKind) {
+        setActiveProfile(kind)
+        wheelOverrideBundleIdentifier =
+            NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        logger.notice("Profile wheel selected: \(kind.rawValue)")
+    }
+
     func setAction(_ action: MappedAction, for input: ControllerInput) {
         updateEditingProfile { profile in
             profile.setAction(action, for: input)
@@ -196,6 +204,38 @@ final class ProfileStore: ObservableObject {
         updateEditingProfile { $0.touchpad.scrollSensitivity = value }
     }
 
+    func updateGyroEnabled(_ enabled: Bool) {
+        updateEditingProfile { $0.gyro.enabled = enabled }
+    }
+
+    func updateShakeThreshold(_ value: Double) {
+        updateEditingProfile { $0.gyro.shakeThreshold = value }
+    }
+
+    func updateTiltThreshold(_ value: Double) {
+        updateEditingProfile { $0.gyro.tiltThreshold = value }
+    }
+
+    func updateRotationThreshold(_ value: Double) {
+        updateEditingProfile { $0.gyro.rotationThreshold = value }
+    }
+
+    func setGyroAction(_ action: MappedAction, for gesture: GyroGesture) {
+        updateEditingProfile { $0.gyro.setAction(action, for: gesture) }
+    }
+
+    func applySuggestedGyroMappings() {
+        updateEditingProfile { profile in
+            for gesture in GyroGesture.allCases {
+                profile.gyro.setAction(gesture.suggestedAction, for: gesture)
+            }
+        }
+    }
+
+    func resetGyroToShakeOnly() {
+        updateEditingProfile { $0.gyro = .shakeOnly }
+    }
+
     func resetEditingProfile() {
         guard let original = ControllerProfile.defaults.first(
             where: { $0.kind == editingKind }
@@ -210,6 +250,10 @@ final class ProfileStore: ObservableObject {
             return
         }
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        if let wheelOverrideBundleIdentifier {
+            if bundleID == wheelOverrideBundleIdentifier { return }
+            self.wheelOverrideBundleIdentifier = nil
+        }
         let windowTitle = focusedWindowTitle()
         let contextualMatch = profiles.first { profile in
             guard profile.kind != .general else { return false }

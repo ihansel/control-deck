@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import OSLog
 
@@ -11,9 +12,13 @@ final class AppModel: ObservableObject {
     let taskMonitor = CodexTaskMonitor()
     let profiles: ProfileStore
     let shiftLayer: ShiftLayerStore
+    let tutorial: QuickTutorialStore
+    let screenCapturePreferences: ScreenCapturePreferences
+    let screenshotEditor: ScreenshotEditorController
     let pointer = PointerService()
     let touchpad = TouchpadGestureEngine()
     let codexExtension = CodexExtensionService()
+    let gyroTelemetry = GyroTelemetry()
 
     @Published private(set) var currentState: CodexTaskState = .disconnected
     @Published private(set) var recentTasks: [RecentCodexTask] = []
@@ -32,6 +37,8 @@ final class AppModel: ObservableObject {
         "Controller microphone has not been tested yet"
     @Published private(set) var installationResult =
         "Run from Applications for the smoothest startup experience."
+    @Published private(set) var lastGyroGesture: GyroGesture?
+    @Published private(set) var gyroGameActive = false
 
     private let hud = HUDController()
     private let controllerOverlay = ControllerOverlayController()
@@ -49,10 +56,13 @@ final class AppModel: ObservableObject {
     private var hybridDictationPressed = false
     private var soundGeneration = 0
     private var heldMouseInputs: [ControllerInput: CGMouseButton] = [:]
+    private var screenshotEditorCapturedInputs: Set<ControllerInput> = []
+    private var tutorialCapturedInputs: Set<ControllerInput> = []
     private var optionsPressed = false
     private var optionsLayerActive = false
     private var optionsLayerUsed = false
     private var optionsGeneration = 0
+    private var profileWheelSelector = RadialProfileSelector()
     private var createPressed = false
     private var createLayerUsed = false
     private var reasoningControlOpen = false
@@ -60,12 +70,23 @@ final class AppModel: ObservableObject {
     private var pendingReasoningSteps: [ReasoningStep] = []
     private var reasoningGeneration = 0
     private var reasoningGate = SteppedStickGate()
+    private var gyroEngine = GyroGestureEngine()
+    private var telemetryRateLimiter = TelemetryRateLimiter(
+        minimumInterval: 1.0 / 30.0
+    )
+    private var cancellables: Set<AnyCancellable> = []
     private let logger = Logger(
         subsystem: "com.ianhansel.controldeck",
         category: "app"
     )
 
     init() {
+        let capturePreferences = ScreenCapturePreferences()
+        screenCapturePreferences = capturePreferences
+        screenshotEditor = ScreenshotEditorController(
+            preferences: capturePreferences
+        )
+        tutorial = QuickTutorialStore()
         profiles = ProfileStore()
         shiftLayer = ShiftLayerStore()
         DispatchQueue.main.async { [weak self] in
@@ -100,9 +121,26 @@ final class AppModel: ObservableObject {
             let action = self.profiles.activeProfile.touchpad.action(for: gesture)
             self.execute(action, source: gesture.label)
         }
+        pointer.onScreenshotCaptured = { [weak self] image in
+            self?.screenshotCaptured(image)
+        }
+        pointer.onScreenshotCaptureFailed = { [weak self] message in
+            self?.feedbackFailure(message)
+        }
         taskMonitor.onTasksChanged = { [weak self] tasks in
             self?.tasksChanged(tasks)
         }
+        profiles.$activeKind
+            .combineLatest(profiles.$profiles)
+            .sink { [weak self] kind, profiles in
+                guard let self else { return }
+                let enabled = profiles.first(where: { $0.kind == kind })?
+                    .gyro.enabled ?? true
+                self.controller.setMotionSensorsActive(
+                    enabled || self.gyroGameActive
+                )
+            }
+            .store(in: &cancellables)
 
         automation.refreshAccessibility()
         accessibilityObserver = NotificationCenter.default.addObserver(
@@ -412,6 +450,26 @@ final class AppModel: ObservableObject {
         case let .button(input, pressed):
             handleButton(input, pressed: pressed)
         case let .stick(stick, x, y):
+            if screenshotEditor.isPresented {
+                guard stick == .left else { return }
+                pointer.updateStick(
+                    .left,
+                    x: x,
+                    y: y,
+                    settings: Self.screenshotEditorPointerSettings
+                )
+                return
+            }
+            if stick == .left, optionsPressed {
+                if !optionsLayerActive,
+                   sqrt((x * x) + (y * y)) >= 0.28 {
+                    activateOptionsLayer()
+                }
+                if optionsLayerActive {
+                    handleProfileWheelStick(x: x, y: y)
+                }
+                return
+            }
             if stick == .right, createPressed {
                 handleReasoningStick(y: y)
                 return
@@ -442,10 +500,101 @@ final class AppModel: ObservableObject {
             )
         case .microphoneButton:
             toggleVoiceCapture(initiator: .microphone)
+        case let .motion(sample):
+            handleMotion(sample)
         }
     }
 
+    func setGyroGameActive(_ active: Bool) {
+        gyroGameActive = active
+        gyroEngine.reset()
+        controller.setMotionSensorsActive(
+            active || profiles.activeProfile.gyro.enabled
+        )
+        if active {
+            lastAction = "Gyro mini-game active · normal motion actions paused"
+        }
+    }
+
+    func gyroGameDidReachGoal() {
+        controller.playHaptic(.success)
+        lastAction = "Gyro course complete"
+    }
+
+    func gyroGameDidFall() {
+        controller.playHaptic(.warning)
+        lastAction = "Gyro ball recovered · two-second penalty"
+    }
+
+    func gyroGameDidCollectToken() {
+        controller.playHaptic(.selection)
+        lastAction = "Gyro time token · one second recovered"
+    }
+
+    private func handleMotion(_ sample: ControllerMotionSample) {
+        if telemetryRateLimiter.shouldPublish(at: sample.timestamp) {
+            gyroTelemetry.update(sample)
+        }
+        guard !gyroGameActive else { return }
+        let settings = profiles.activeProfile.gyro
+        guard let gesture = gyroEngine.update(sample, settings: settings) else {
+            return
+        }
+        lastGyroGesture = gesture
+        let action = settings.action(for: gesture)
+        guard action != .none else {
+            lastAction = "\(gesture.label) detected · no action assigned"
+            return
+        }
+        if gesture == .shake {
+            controller.playHaptic(.warning)
+        } else {
+            controller.playHaptic(.selection)
+        }
+        execute(action, source: gesture.label)
+    }
+
     private func handleButton(_ input: ControllerInput, pressed: Bool) {
+        if !pressed, screenshotEditorCapturedInputs.remove(input) != nil {
+            if input == .cross {
+                pointer.setButton(.left, pressed: false)
+            }
+            return
+        }
+        if !pressed, tutorialCapturedInputs.remove(input) != nil {
+            return
+        }
+        if screenshotEditor.isPresented {
+            if pressed { screenshotEditorCapturedInputs.insert(input) }
+            if input == .cross {
+                pointer.setButton(.left, pressed: pressed)
+                if pressed { controller.playHaptic(.selection) }
+                return
+            }
+            guard pressed else { return }
+            if let editorAction = screenshotEditor.handleControllerButton(input) {
+                handleScreenshotEditorAction(editorAction)
+            }
+            return
+        }
+        if tutorial.isPresented {
+            if pressed { tutorialCapturedInputs.insert(input) }
+            guard pressed else { return }
+            if let result = tutorial.handleControllerButton(input) {
+                switch result {
+                case .changedStep:
+                    lastAction = "Tutorial · \(tutorial.currentStep.title)"
+                    controller.playHaptic(.selection)
+                case .completed:
+                    lastAction = "Quick tutorial complete"
+                    controller.playHaptic(.success)
+                case .skipped:
+                    lastAction = "Tutorial skipped · replay it from Setup"
+                    controller.playHaptic(.selection)
+                }
+            }
+            return
+        }
         if input == .options {
             handleOptionsButton(pressed: pressed)
             return
@@ -455,9 +604,7 @@ final class AppModel: ObservableObject {
             return
         }
         if optionsPressed {
-            if pressed {
-                handleShiftLayerInput(input)
-            }
+            if pressed { optionsLayerUsed = true }
             return
         }
 
@@ -496,6 +643,9 @@ final class AppModel: ObservableObject {
         }
         if action == .screenshotSelection {
             if pressed {
+                pointer.keepScreenshotOnClipboard =
+                    screenCapturePreferences.copyOriginalToClipboard ||
+                    !screenCapturePreferences.openEditorAfterCapture
                 if pointer.beginScreenshotSelection() {
                     lastAction =
                         "Drag with the left stick, then release \(input.label)"
@@ -512,7 +662,7 @@ final class AppModel: ObservableObject {
                 }
             } else if pointer.isSelectingScreenshot {
                 pointer.endScreenshotSelection()
-                lastAction = "Screenshot captured"
+                lastAction = "Finishing screen capture"
                 controller.playHaptic(.success)
             }
             return
@@ -530,12 +680,79 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func screenshotCaptured(_ image: NSImage) {
+        pointer.stop()
+        if screenCapturePreferences.openEditorAfterCapture {
+            screenshotEditor.present(image: image)
+            lastAction = screenCapturePreferences.copyOriginalToClipboard
+                ? "Screenshot copied · editor open"
+                : "Screenshot editor open"
+            hud.show(
+                "Screen capture ready",
+                detail: "Edit with the controller or dismiss with Circle",
+                color: .systemCyan
+            )
+        } else {
+            lastAction = "Screenshot copied to clipboard"
+            hud.show(
+                "Screenshot copied",
+                detail: "Ready to paste",
+                color: .systemGreen
+            )
+        }
+        controller.playHaptic(.success)
+    }
+
+    private func handleScreenshotEditorAction(
+        _ action: ScreenshotEditorControllerAction
+    ) {
+        switch action {
+        case let .tool(tool):
+            lastAction = "Screenshot tool · \(tool)"
+            controller.playHaptic(.selection)
+        case .undo:
+            lastAction = "Screenshot edit undone"
+            controller.playHaptic(.selection)
+        case .redo:
+            lastAction = "Screenshot edit redone"
+            controller.playHaptic(.selection)
+        case .copied:
+            lastAction = "Edited screenshot copied"
+            controller.playHaptic(.success)
+        case .saved:
+            lastAction = "Edited screenshot saved"
+            controller.playHaptic(.success)
+        case .dismissed:
+            lastAction = "Screenshot editor dismissed · original kept"
+            controller.playHaptic(.selection)
+        case .done:
+            lastAction = screenCapturePreferences.copyEditedImageOnDone
+                ? "Edited screenshot copied"
+                : "Screenshot editor closed"
+            controller.playHaptic(.success)
+        }
+    }
+
+    private static var screenshotEditorPointerSettings: StickPointerSettings {
+        StickPointerSettings(
+            source: .left,
+            speed: 1_050,
+            acceleration: 1.65,
+            deadZone: 0.12,
+            scrollSource: .off,
+            scrollSpeed: 0,
+            scrollAcceleration: 1,
+            scrollDeadZone: 0.2
+        )
+    }
+
     private func handleOptionsButton(pressed: Bool) {
         if pressed {
             guard !optionsPressed else { return }
             optionsPressed = true
             optionsLayerActive = false
             optionsLayerUsed = false
+            profileWheelSelector.reset()
             optionsGeneration += 1
             let generation = optionsGeneration
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
@@ -555,9 +772,24 @@ final class AppModel: ObservableObject {
         guard optionsPressed else { return }
         optionsPressed = false
         optionsGeneration += 1
+        let selectedIndex = profileWheelSelector.selectedIndex
         let shouldRunTapAction = !optionsLayerActive && !optionsLayerUsed
         optionsLayerActive = false
+        profileWheelSelector.reset()
         controllerOverlay.hide()
+        if let selectedIndex {
+            let slot = shiftLayer.slot(at: selectedIndex)
+            let profile = profiles.profile(for: slot.profileKind)
+            profiles.setActiveProfileFromWheel(slot.profileKind)
+            lastAction = "Profile switched · \(profile.name)"
+            hud.show(
+                profile.name,
+                detail: "Controller profile selected",
+                color: .systemCyan
+            )
+            controller.playHaptic(.success)
+            return
+        }
         if shouldRunTapAction {
             execute(
                 profiles.activeProfile.action(for: .options),
@@ -566,39 +798,35 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func activateOptionsLayer(
-        selectedInput: ControllerInput? = nil
-    ) {
+    private func activateOptionsLayer() {
         optionsLayerActive = true
-        controllerOverlay.showRadial(
-            profile: profiles.activeProfile,
-            task: overlayTask,
-            slots: shiftLayer.slots,
-            selectedInput: selectedInput
+        controllerOverlay.showProfileWheel(
+            profiles: profiles.profiles,
+            slots: shiftLayer.profileSlots,
+            activeKind: profiles.activeKind,
+            selectedIndex: profileWheelSelector.selectedIndex
         )
-        if selectedInput == nil {
-            lastAction = "Options layer · choose a skill or command"
-            controller.playHaptic(.selection)
-        }
+        lastAction = "Profile wheel · choose with the left stick"
+        controller.playHaptic(.selection)
     }
 
-    private func handleShiftLayerInput(_ input: ControllerInput) {
-        if let direction = SkillDirection(input: input) {
-            let slot = shiftLayer.slot(for: direction)
-            optionsLayerUsed = true
-            activateOptionsLayer(selectedInput: input)
-            let succeeded = automation.runPrompt(slot.prompt)
-            finish("Skill · \(slot.title)", succeeded: succeeded)
-            return
+    private func handleProfileWheelStick(x: Float, y: Float) {
+        let previous = profileWheelSelector.selectedIndex
+        let selected = profileWheelSelector.update(x: x, y: y)
+        guard selected != previous else { return }
+        controllerOverlay.showProfileWheel(
+            profiles: profiles.profiles,
+            slots: shiftLayer.profileSlots,
+            activeKind: profiles.activeKind,
+            selectedIndex: selected
+        )
+        if let selected {
+            let profile = profiles.profile(
+                for: shiftLayer.slot(at: selected).profileKind
+            )
+            lastAction = "Profile wheel · \(profile.name)"
+            controller.playHaptic(.selection)
         }
-        if let command = ShiftFaceCommand(input: input) {
-            optionsLayerUsed = true
-            activateOptionsLayer(selectedInput: input)
-            execute(command.action, source: "Options + \(input.label)")
-            return
-        }
-        lastAction = "No shifted action for \(input.label)"
-        controller.playHaptic(.warning)
     }
 
     private func handleCreateButton(pressed: Bool) {
@@ -760,6 +988,17 @@ final class AppModel: ObservableObject {
             selectAdjacentTask(offset: 1)
         case .showControllerOverlay:
             showControllerContext()
+        case .deleteTextWithConfirmation:
+            let deleted = automation.confirmDeleteFocusedText()
+            lastAction = automation.lastResult
+            if deleted {
+                hud.show("Text deleted", color: .systemGreen)
+                controller.playHaptic(.success)
+            } else if automation.lastResult == "Delete cancelled" {
+                controller.playHaptic(.selection)
+            } else {
+                feedbackFailure(automation.lastResult)
+            }
         default:
             finish(action.label, succeeded: automation.run(action))
         }
@@ -813,7 +1052,8 @@ final class AppModel: ObservableObject {
         controllerOverlay.showContext(
             profile: profiles.activeProfile,
             task: overlayTask,
-            slots: shiftLayer.slots
+            profiles: profiles.profiles,
+            slots: shiftLayer.profileSlots
         )
         lastAction = "Controller overlay"
         controller.playHaptic(.selection)

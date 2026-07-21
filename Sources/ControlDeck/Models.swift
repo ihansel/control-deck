@@ -111,6 +111,7 @@ enum ControllerEvent: Equatable, Sendable {
     case action(ControllerAction)
     case pushToTalk(Bool)
     case microphoneButton
+    case motion(ControllerMotionSample)
 }
 
 enum ControllerAction: String, CaseIterable, Codable, Sendable {

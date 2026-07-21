@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 @main
@@ -27,6 +28,171 @@ struct ControlDeckLogicTestRunner {
             "General Cross clicks"
         )
         expect(
+            ControllerProfile.codex.gyro.action(for: .shake) ==
+                .deleteTextWithConfirmation &&
+                ControllerProfile.codex.gyro.action(for: .tiltLeft) == .none,
+            "only hard shake has a default gyro action"
+        )
+        expect(
+            GyroSettings.suggested.action(for: .tiltLeft) == .back &&
+                GyroSettings.suggested.action(for: .twistClockwise) ==
+                    .browserNextTab,
+            "optional gyro suggestions use intuitive navigation actions"
+        )
+
+        func motion(
+            time: Double,
+            gravityX: Double = 0,
+            accelerationX: Double = 0
+        ) -> ControllerMotionSample {
+            ControllerMotionSample(
+                gravityX: gravityX,
+                gravityY: 0,
+                gravityZ: -1,
+                accelerationX: accelerationX,
+                accelerationY: 0,
+                accelerationZ: 0,
+                rotationX: 0,
+                rotationY: 0,
+                rotationZ: 0,
+                timestamp: time
+            )
+        }
+        var shakeEngine = GyroGestureEngine()
+        expect(
+            shakeEngine.update(
+                motion(time: 0.1, accelerationX: 2.6),
+                settings: .shakeOnly
+            ) == nil &&
+                shakeEngine.update(
+                    motion(time: 0.2),
+                    settings: .shakeOnly
+                ) == nil &&
+                shakeEngine.update(
+                    motion(time: 0.3, accelerationX: -2.7),
+                    settings: .shakeOnly
+                ) == nil &&
+                shakeEngine.update(
+                    motion(time: 0.4),
+                    settings: .shakeOnly
+                ) == nil &&
+                shakeEngine.update(
+                    motion(time: 0.5, accelerationX: 2.8),
+                    settings: .shakeOnly
+                ) == .shake,
+            "shake requires three strong alternating impulses"
+        )
+        var tiltEngine = GyroGestureEngine()
+        expect(
+            tiltEngine.update(
+                motion(time: 1.0, gravityX: -0.75),
+                settings: .suggested
+            ) == nil &&
+                tiltEngine.update(
+                    motion(time: 1.35, gravityX: -0.75),
+                    settings: .suggested
+                ) == .tiltLeft,
+            "tilt gestures require an intentional hold"
+        )
+        var telemetryLimiter = TelemetryRateLimiter(
+            minimumInterval: 1.0 / 30.0
+        )
+        expect(
+            telemetryLimiter.shouldPublish(at: 10) &&
+                !telemetryLimiter.shouldPublish(at: 10.01) &&
+                telemetryLimiter.shouldPublish(at: 10.04),
+            "gyro UI telemetry is capped at thirty updates per second"
+        )
+        var motionForwarding = MotionSampleForwardingGate()
+        expect(
+            motionForwarding.shouldForward(x: 0, y: 0) &&
+                !motionForwarding.shouldForward(x: 0.001, y: 0.001) &&
+                motionForwarding.shouldForward(x: 0.01, y: 0),
+            "gyro game forwards its first sample and meaningful changes"
+        )
+        motionForwarding.reset()
+        expect(
+            motionForwarding.shouldForward(x: 0.01, y: 0),
+            "gyro game resends motion after its WebKit bridge reloads"
+        )
+        func rawMotion(
+            time: Double,
+            gravityX: Double = 0,
+            gravityY: Double = 0,
+            gravityZ: Double = 0,
+            userAccelerationX: Double = 0,
+            totalAccelerationX: Double = 0,
+            totalAccelerationY: Double = 0,
+            totalAccelerationZ: Double = -1,
+            hasSeparateGravity: Bool = false
+        ) -> RawControllerMotionSample {
+            RawControllerMotionSample(
+                reportedGravityX: gravityX,
+                reportedGravityY: gravityY,
+                reportedGravityZ: gravityZ,
+                reportedUserAccelerationX: userAccelerationX,
+                reportedUserAccelerationY: 0,
+                reportedUserAccelerationZ: 0,
+                totalAccelerationX: totalAccelerationX,
+                totalAccelerationY: totalAccelerationY,
+                totalAccelerationZ: totalAccelerationZ,
+                rotationX: 0,
+                rotationY: 0,
+                rotationZ: 0,
+                hasSeparateGravity: hasSeparateGravity,
+                timestamp: time
+            )
+        }
+        var fallbackMotion = ControllerMotionNormalizer()
+        let stationaryMotion = fallbackMotion.normalize(
+            rawMotion(time: 20)
+        )
+        expect(
+            abs(stationaryMotion.gravityZ + 1) < 0.001 &&
+                abs(stationaryMotion.accelerationZ) < 0.001,
+            "total acceleration initializes the fallback gravity estimate"
+        )
+        var tiltedMotion = stationaryMotion
+        for index in 1...30 {
+            tiltedMotion = fallbackMotion.normalize(
+                rawMotion(
+                    time: 20 + Double(index) * 0.02,
+                    totalAccelerationX: 0.72,
+                    totalAccelerationZ: -0.69
+                )
+            )
+        }
+        expect(
+            tiltedMotion.gravityX > 0.65,
+            "fallback gravity follows a held tilt for telemetry and the game"
+        )
+        let impulseMotion = fallbackMotion.normalize(
+            rawMotion(
+                time: 20.62,
+                totalAccelerationX: 3.5,
+                totalAccelerationZ: -0.69
+            )
+        )
+        expect(
+            impulseMotion.accelerationX > 2.25,
+            "fallback filtering preserves strong shake impulses"
+        )
+        var separatedMotion = ControllerMotionNormalizer()
+        let nativeMotion = separatedMotion.normalize(
+            rawMotion(
+                time: 30,
+                gravityX: -0.8,
+                gravityZ: -0.6,
+                userAccelerationX: 0.35,
+                hasSeparateGravity: true
+            )
+        )
+        expect(
+            nativeMotion.gravityX == -0.8 &&
+                nativeMotion.accelerationX == 0.35,
+            "native separated gravity remains authoritative when available"
+        )
+        expect(
             ControllerProfile.chrome.action(for: .triangle) == .browserAddress,
             "Chrome Triangle focuses address"
         )
@@ -51,6 +217,48 @@ struct ControlDeckLogicTestRunner {
                 == .screenshotSelection,
             "Codex R2 selects a screenshot area"
         )
+        let captureDefaultsName = "ControlDeckTests.ScreenCapture"
+        let captureDefaults = UserDefaults(suiteName: captureDefaultsName)!
+        captureDefaults.removePersistentDomain(forName: captureDefaultsName)
+        let capturePreferences = ScreenCapturePreferences(
+            defaults: captureDefaults
+        )
+        expect(
+            capturePreferences.copyOriginalToClipboard &&
+                capturePreferences.openEditorAfterCapture &&
+                capturePreferences.copyEditedImageOnDone &&
+                capturePreferences.defaultTool == .highlighter,
+            "screen captures copy and open with the highlighter by default"
+        )
+        let fittedCapture = ScreenshotCanvasGeometry.aspectFit(
+            imageSize: CGSize(width: 1_600, height: 900),
+            in: CGRect(x: 0, y: 0, width: 800, height: 800)
+        )
+        expect(
+            fittedCapture == CGRect(x: 0, y: 175, width: 800, height: 450),
+            "screenshot editor preserves the captured image aspect ratio"
+        )
+        let editorModel = ScreenshotEditorModel(
+            image: NSImage(size: NSSize(width: 100, height: 100)),
+            preferences: capturePreferences
+        )
+        editorModel.selectAdjacentTool(offset: -1)
+        expect(
+            editorModel.tool == .redact,
+            "controller tool selection wraps in both directions"
+        )
+        editorModel.tool = .rectangle
+        editorModel.begin(at: CGPoint(x: 0.1, y: 0.1))
+        editorModel.finish(at: CGPoint(x: 0.8, y: 0.8))
+        expect(
+            editorModel.canUndo && editorModel.annotations.count == 1,
+            "screenshot annotations are recorded and undoable"
+        )
+        expect(
+            editorModel.renderedImage() != nil,
+            "screenshot annotations render into an exportable image"
+        )
+        captureDefaults.removePersistentDomain(forName: captureDefaultsName)
         expect(
             ControllerProfile.codex.action(for: .dpadUp) == .codexSend,
             "Codex D-pad Up sends instead of duplicating Plan"
@@ -103,13 +311,16 @@ struct ControlDeckLogicTestRunner {
             with: JSONEncoder().encode(ControllerProfile.terminal)
         ) as! [String: Any]
         legacyProfileObject.removeValue(forKey: "windowTitleKeywords")
+        legacyProfileObject.removeValue(forKey: "gyro")
         let legacyProfile = try! JSONDecoder().decode(
             ControllerProfile.self,
             from: JSONSerialization.data(withJSONObject: legacyProfileObject)
         )
         expect(
-            legacyProfile.windowTitleKeywords.isEmpty,
-            "saved profiles from before contextual matching remain decodable"
+            legacyProfile.windowTitleKeywords.isEmpty &&
+                legacyProfile.gyro.action(for: .shake) ==
+                    .deleteTextWithConfirmation,
+            "legacy profiles gain the safe shake-only gyro default"
         )
         expect(
             ControllerProfile.chrome.bundleIdentifiers.contains(
@@ -165,16 +376,69 @@ struct ControlDeckLogicTestRunner {
             "General face buttons provide copy and paste"
         )
         expect(
-            CodexSkillSlot.defaults.count == 4 &&
-                Set(CodexSkillSlot.defaults.map(\.direction)).count == 4,
-            "Options layer has four unique custom skill slots"
+            ProfileWheelSlot.defaults.count == 8 &&
+                Set(ProfileWheelSlot.defaults.map(\.position)).count == 8 &&
+                Set(ProfileWheelSlot.defaults.map(\.profileKind)).count == 8,
+            "Options layer has eight unique popular-app profile slots"
+        )
+        let tutorialDefaultsName = "ControlDeckTests.QuickTutorial"
+        let tutorialDefaults = UserDefaults(suiteName: tutorialDefaultsName)!
+        tutorialDefaults.removePersistentDomain(forName: tutorialDefaultsName)
+        let tutorial = QuickTutorialStore(defaults: tutorialDefaults)
+        tutorial.offerIfNeeded()
+        expect(
+            tutorial.isPresented && tutorial.hasBeenOffered &&
+                tutorial.currentStep == .welcome,
+            "the optional tutorial is offered once from its welcome step"
         )
         expect(
-            ShiftFaceCommand(input: .cross)?.action == .codexApprove &&
-                ShiftFaceCommand(input: .circle)?.action == .codexDecline &&
-                ShiftFaceCommand(input: .square)?.action == .codexSend &&
-                ShiftFaceCommand(input: .triangle)?.action == .codexFastMode,
-            "Options face buttons expose Approve, Decline, Send and Fast mode"
+            tutorial.handleControllerButton(.r1) == .changedStep &&
+                tutorial.currentStep == .pointer &&
+                tutorial.handleControllerButton(.l1) == .changedStep &&
+                tutorial.currentStep == .welcome,
+            "controller shoulder buttons navigate the tutorial"
+        )
+        expect(
+            tutorial.handleControllerButton(.circle) == .skipped &&
+                !tutorial.isPresented && !tutorial.hasCompleted,
+            "Circle skips the tutorial without marking it complete"
+        )
+        tutorial.start()
+        for _ in 0..<tutorial.stepCount {
+            _ = tutorial.next()
+        }
+        let reloadedTutorial = QuickTutorialStore(defaults: tutorialDefaults)
+        expect(
+            tutorial.hasCompleted && !tutorial.isPresented &&
+                reloadedTutorial.hasCompleted,
+            "tutorial completion persists and suppresses future offers"
+        )
+        tutorialDefaults.removePersistentDomain(forName: tutorialDefaultsName)
+        let wheelDefaultsName = "ControlDeckTests.ProfileWheel"
+        let wheelDefaults = UserDefaults(suiteName: wheelDefaultsName)!
+        wheelDefaults.removePersistentDomain(forName: wheelDefaultsName)
+        let wheelStore = ShiftLayerStore(defaults: wheelDefaults)
+        wheelStore.setProfile(.chrome, at: 0)
+        expect(
+            wheelStore.slot(at: 0).profileKind == .chrome &&
+                wheelStore.slot(at: 1).profileKind == .codex &&
+                Set(wheelStore.profileSlots.map(\.profileKind)).count == 8,
+            "assigning an existing profile swaps wheel slots without duplicates"
+        )
+        wheelDefaults.removePersistentDomain(forName: wheelDefaultsName)
+
+        var profileSelector = RadialProfileSelector()
+        expect(
+            profileSelector.update(x: 0, y: 0.8) == 0 &&
+                profileSelector.update(x: 0.8, y: 0.8) == 1 &&
+                profileSelector.update(x: 0.8, y: 0) == 2 &&
+                profileSelector.update(x: 0, y: -0.8) == 4 &&
+                profileSelector.update(x: -0.8, y: 0) == 6,
+            "left-stick directions select the matching profile-wheel segments"
+        )
+        expect(
+            profileSelector.update(x: 0, y: 0) == nil,
+            "returning the left stick to neutral clears wheel selection"
         )
 
         var reasoningGate = SteppedStickGate()
@@ -291,6 +555,23 @@ struct ControlDeckLogicTestRunner {
                 ]
             ) == CGPoint(x: -80, y: 500),
             "pointer supports displays left of the main display"
+        )
+
+        var menuTrackingTimerFired = false
+        let menuTrackingTimer = Timer(
+            timeInterval: 0.005,
+            repeats: false
+        ) { _ in
+            menuTrackingTimerFired = true
+        }
+        ContinuousInputRunLoop.add(menuTrackingTimer)
+        _ = RunLoop.main.run(
+            mode: .eventTracking,
+            before: Date().addingTimeInterval(0.08)
+        )
+        expect(
+            menuTrackingTimerFired,
+            "pointer timers continue while a menu-bar menu tracks input"
         )
 
         expect(

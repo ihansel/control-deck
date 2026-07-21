@@ -8,6 +8,9 @@ import Foundation
 final class PointerService: ObservableObject {
     @Published private(set) var lastMovementSource = "Off"
     @Published private(set) var isSelectingScreenshot = false
+    var onScreenshotCaptured: ((NSImage) -> Void)?
+    var onScreenshotCaptureFailed: ((String) -> Void)?
+    var keepScreenshotOnClipboard = true
 
     private var timer: Timer?
     private var vector = CGPoint.zero
@@ -21,6 +24,8 @@ final class PointerService: ObservableObject {
     private var lastScrollTick = Date()
     private var screenshotGeneration = 0
     private var screenshotDragStarted = false
+    private var screenshotPasteboardChangeCount = 0
+    private var priorPasteboardItems: [NSPasteboardItem] = []
     private var leftButtonHeld = false
     private var rightButtonHeld = false
     private var middleButtonHeld = false
@@ -145,8 +150,11 @@ final class PointerService: ObservableObject {
         let generation = screenshotGeneration
         isSelectingScreenshot = true
         screenshotDragStarted = false
-        down.flags = [.maskCommand, .maskShift]
-        up.flags = [.maskCommand, .maskShift]
+        let pasteboard = NSPasteboard.general
+        screenshotPasteboardChangeCount = pasteboard.changeCount
+        priorPasteboardItems = snapshotPasteboard(pasteboard)
+        down.flags = [.maskCommand, .maskShift, .maskControl]
+        up.flags = [.maskCommand, .maskShift, .maskControl]
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
 
@@ -173,6 +181,7 @@ final class PointerService: ObservableObject {
     func endScreenshotSelection() {
         guard isSelectingScreenshot else { return }
         screenshotGeneration += 1
+        let generation = screenshotGeneration
         if screenshotDragStarted,
            let current = CGEvent(source: nil)?.location {
             CGEvent(
@@ -181,11 +190,75 @@ final class PointerService: ObservableObject {
                 mouseCursorPosition: current,
                 mouseButton: .left
             )?.post(tap: .cghidEventTap)
+            awaitScreenshot(generation: generation, remainingAttempts: 50)
         } else {
             postEscape()
         }
         screenshotDragStarted = false
         isSelectingScreenshot = false
+    }
+
+    private func awaitScreenshot(
+        generation: Int,
+        remainingAttempts: Int
+    ) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+            [weak self] in
+            guard let self, self.screenshotGeneration == generation else {
+                return
+            }
+            let pasteboard = NSPasteboard.general
+            if pasteboard.changeCount != self.screenshotPasteboardChangeCount,
+               let image = pasteboard.readObjects(
+                   forClasses: [NSImage.self],
+                   options: nil
+               )?.first as? NSImage {
+                if !self.keepScreenshotOnClipboard {
+                    self.restorePasteboard(
+                        pasteboard,
+                        items: self.priorPasteboardItems
+                    )
+                }
+                self.priorPasteboardItems.removeAll()
+                self.onScreenshotCaptured?(image)
+                return
+            }
+            guard remainingAttempts > 1 else {
+                self.priorPasteboardItems.removeAll()
+                self.onScreenshotCaptureFailed?(
+                    "The screen capture did not reach the clipboard"
+                )
+                return
+            }
+            self.awaitScreenshot(
+                generation: generation,
+                remainingAttempts: remainingAttempts - 1
+            )
+        }
+    }
+
+    private func snapshotPasteboard(
+        _ pasteboard: NSPasteboard
+    ) -> [NSPasteboardItem] {
+        (pasteboard.pasteboardItems ?? []).map { source in
+            let copy = NSPasteboardItem()
+            for type in source.types {
+                if let data = source.data(forType: type) {
+                    copy.setData(data, forType: type)
+                }
+            }
+            return copy
+        }
+    }
+
+    private func restorePasteboard(
+        _ pasteboard: NSPasteboard,
+        items: [NSPasteboardItem]
+    ) {
+        pasteboard.clearContents()
+        if !items.isEmpty {
+            pasteboard.writeObjects(items)
+        }
     }
 
     func scroll(deltaX: CGFloat, deltaY: CGFloat) {
@@ -205,27 +278,31 @@ final class PointerService: ObservableObject {
     private func ensureTimer() {
         guard timer == nil else { return }
         lastTick = Date()
-        timer = Timer.scheduledTimer(
-            withTimeInterval: 1.0 / 60.0,
+        let movementTimer = Timer(
+            timeInterval: 1.0 / 60.0,
             repeats: true
         ) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 self?.tick()
             }
         }
+        ContinuousInputRunLoop.add(movementTimer)
+        timer = movementTimer
     }
 
     private func ensureScrollTimer() {
         guard scrollTimer == nil else { return }
         lastScrollTick = Date()
-        scrollTimer = Timer.scheduledTimer(
-            withTimeInterval: 1.0 / 60.0,
+        let movementTimer = Timer(
+            timeInterval: 1.0 / 60.0,
             repeats: true
         ) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 self?.scrollTick()
             }
         }
+        ContinuousInputRunLoop.add(movementTimer)
+        scrollTimer = movementTimer
     }
 
     private func tick() {
@@ -378,6 +455,21 @@ final class PointerService: ObservableObject {
         }
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
+    }
+}
+
+enum ContinuousInputRunLoop {
+    static let modes: [RunLoop.Mode] = [
+        .common,
+        .eventTracking,
+        .modalPanel
+    ]
+
+    @MainActor
+    static func add(_ timer: Timer) {
+        for mode in modes {
+            RunLoop.main.add(timer, forMode: mode)
+        }
     }
 }
 

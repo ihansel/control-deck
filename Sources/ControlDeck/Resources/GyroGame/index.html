@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'">
+  <title>Tilt Run</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="game" aria-label="Tilt Run gyro game">
+    <canvas id="viewport"></canvas>
+    <header class="hud">
+      <div class="hud-panel course-panel">
+        <span class="hud-label">COURSE</span>
+        <strong id="course-number">01</strong>
+        <small id="seed-label">SEED 0000</small>
+      </div>
+      <div class="hud-panel timer-panel" aria-live="polite">
+        <span class="timer-icon">◴</span>
+        <strong id="timer">00:00.00</strong>
+      </div>
+      <div class="hud-panel best-panel">
+        <span class="hud-label">BEST</span>
+        <strong id="best-time">--:--.--</strong>
+      </div>
+    </header>
+    <div id="status" class="status-card">
+      <strong>TILT RUN</strong>
+      <span>Tilt the controller to roll</span>
+      <button id="start-button" type="button">START RUN</button>
+    </div>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </main>
+  <script defer src="game.bundle.js"></script>
+</body>
+</html>

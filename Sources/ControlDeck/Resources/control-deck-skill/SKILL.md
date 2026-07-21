@@ -5,15 +5,17 @@ description: Customize ControlDeck mappings, pointer settings, app assignments a
 
 # PS5 Controller Customizer
 
-1. Call `list_profiles` and `get_profile`, or `get_shift_layer` for skill slots.
-2. Use the narrowest `control-deck` MCP mutation tool.
+1. Call `list_profiles` and `get_profile`, or `get_profile_wheel` for the
+   eight profile slots.
+2. Use the narrowest `control-deck` MCP mutation tool, including `set_gyro`
+   or `set_gyro_mapping` for motion controls.
 3. Preserve unrelated mappings and never invent input names.
 4. Read the changed profile again and report the exact result.
 5. Tell the user to return to ControlDeck to reload external changes.
 
-Use MCP for profile and custom skill-slot changes. Source-code changes are
+Use MCP for profile and profile-wheel changes. Source-code changes are
 appropriate only when the requested behavior cannot be represented by a
-mapping, pointer setting, skill slot, or app assignment.
+mapping, pointer setting, profile-wheel slot, or app assignment.
 
 Examples include remapping Terminal interrupt or moving Meetings raise hand to
 a preferred button. App-specific actions are valid wherever a profile accepts

@@ -323,6 +323,7 @@ enum MappedAction: String, Codable, CaseIterable, Identifiable, Sendable {
     case openClaude
     case systemDictation
     case showControllerOverlay
+    case deleteTextWithConfirmation
 
     var id: String { rawValue }
 
@@ -449,6 +450,7 @@ enum MappedAction: String, Codable, CaseIterable, Identifiable, Sendable {
         case .openClaude: "Open Claude"
         case .systemDictation: "System dictation (Fn Fn)"
         case .showControllerOverlay: "Show controller overlay"
+        case .deleteTextWithConfirmation: "Text · Delete with confirmation"
         }
     }
 
@@ -506,7 +508,7 @@ enum MappedAction: String, Codable, CaseIterable, Identifiable, Sendable {
         case .openCodex, .openChrome, .openSpotify, .openClaude:
             .apps
         case .none, .systemDictation, .screenshotSelection,
-             .showControllerOverlay:
+             .showControllerOverlay, .deleteTextWithConfirmation:
             .other
         }
     }
@@ -775,6 +777,7 @@ struct ControllerProfile: Codable, Equatable, Identifiable, Sendable {
     var bindings: [String: String]
     var pointer: StickPointerSettings
     var touchpad: TouchpadSettings
+    var gyro: GyroSettings
 
     var id: String { kind.rawValue }
 
@@ -785,7 +788,8 @@ struct ControllerProfile: Codable, Equatable, Identifiable, Sendable {
         windowTitleKeywords: [String] = [],
         bindings: [String: String],
         pointer: StickPointerSettings,
-        touchpad: TouchpadSettings
+        touchpad: TouchpadSettings,
+        gyro: GyroSettings = .shakeOnly
     ) {
         self.kind = kind
         self.name = name
@@ -794,6 +798,7 @@ struct ControllerProfile: Codable, Equatable, Identifiable, Sendable {
         self.bindings = bindings
         self.pointer = pointer
         self.touchpad = touchpad
+        self.gyro = gyro
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -804,6 +809,7 @@ struct ControllerProfile: Codable, Equatable, Identifiable, Sendable {
         case bindings
         case pointer
         case touchpad
+        case gyro
     }
 
     init(from decoder: Decoder) throws {
@@ -821,6 +827,10 @@ struct ControllerProfile: Codable, Equatable, Identifiable, Sendable {
         bindings = try values.decode([String: String].self, forKey: .bindings)
         pointer = try values.decode(StickPointerSettings.self, forKey: .pointer)
         touchpad = try values.decode(TouchpadSettings.self, forKey: .touchpad)
+        gyro = try values.decodeIfPresent(
+            GyroSettings.self,
+            forKey: .gyro
+        ) ?? .shakeOnly
     }
 
     func encode(to encoder: Encoder) throws {
@@ -832,6 +842,7 @@ struct ControllerProfile: Codable, Equatable, Identifiable, Sendable {
         try values.encode(bindings, forKey: .bindings)
         try values.encode(pointer, forKey: .pointer)
         try values.encode(touchpad, forKey: .touchpad)
+        try values.encode(gyro, forKey: .gyro)
     }
 
     func action(for input: ControllerInput) -> MappedAction {

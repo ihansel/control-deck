@@ -10,9 +10,12 @@ final class DualSenseControllerService: ObservableObject {
     @Published private(set) var batteryState = "Unknown"
     @Published private(set) var lastInput = "Waiting for controller"
     @Published private(set) var transport: ControllerTransport = .unknown
-    @Published private(set) var activeTouchCount = 0
+    private(set) var activeTouchCount = 0
     @Published private(set) var controllerFamily: ControllerFamily = .dualSense
     @Published private(set) var controllerName = "DualSense"
+    @Published private(set) var motionAvailable = false
+
+    var isCharging: Bool { batteryState == "Charging" }
 
     var onEvent: ((ControllerEvent) -> Void)?
     var onBluetoothMicrophonePacket: ((Data) -> Void)?
@@ -36,6 +39,8 @@ final class DualSenseControllerService: ObservableObject {
     private var speakerInputProtectionActive = false
     private var speakerPlaybackActive = false
     private var speakerCompletion: ((String) -> Void)?
+    private var motionSensorsRequested = true
+    private var motionNormalizer = ControllerMotionNormalizer()
     private let logger = Logger(subsystem: "com.ianhansel.controldeck", category: "controller")
 
     init() {
@@ -155,6 +160,14 @@ final class DualSenseControllerService: ObservableObject {
         displayedState = state
         updateLight()
         configurePulseTimer(for: state)
+    }
+
+    func setMotionSensorsActive(_ active: Bool) {
+        motionSensorsRequested = active
+        guard let motion = controller?.motion,
+              motion.sensorsRequireManualActivation
+        else { return }
+        motion.sensorsActive = active
     }
 
     func playHaptic(_ cue: HapticCue) {
@@ -308,6 +321,7 @@ final class DualSenseControllerService: ObservableObject {
             Task { @MainActor in self?.refreshBattery() }
         }
         configure(gamepad)
+        configureMotion(controller)
         configureHaptics(controller)
         if controllerFamily.isDualSense {
             configureAdaptiveTriggers()
@@ -318,7 +332,7 @@ final class DualSenseControllerService: ObservableObject {
         }
         playHaptic(.connect)
         logger.notice(
-            "\(self.controllerName, privacy: .public) connected; family=\(self.controllerFamily.rawValue, privacy: .public) light=\(controller.light != nil) haptics=\(controller.haptics != nil) battery=\(controller.battery != nil)"
+            "\(self.controllerName, privacy: .public) connected; family=\(self.controllerFamily.rawValue, privacy: .public) light=\(controller.light != nil) haptics=\(controller.haptics != nil) motion=\(self.motionAvailable) battery=\(controller.battery != nil)"
         )
     }
 
@@ -329,6 +343,11 @@ final class DualSenseControllerService: ObservableObject {
         batteryTimer = nil
         hapticEngine?.stop(completionHandler: nil)
         hapticEngine = nil
+        motionNormalizer.reset()
+        controller?.motion?.valueChangedHandler = nil
+        if controller?.motion?.sensorsRequireManualActivation == true {
+            controller?.motion?.sensorsActive = false
+        }
         controller = nil
         isConnected = false
         displayedState = .disconnected
@@ -342,6 +361,7 @@ final class DualSenseControllerService: ObservableObject {
         activeTouchCount = 0
         controllerName = "DualSense"
         controllerFamily = .dualSense
+        motionAvailable = false
         logger.notice("DualSense disconnected")
     }
 
@@ -418,6 +438,53 @@ final class DualSenseControllerService: ObservableObject {
                 self?.onEvent?(.stick(.right, x: x, y: y))
             }
         }
+    }
+
+    private func configureMotion(_ controller: GCController) {
+        motionNormalizer.reset()
+        guard let motion = controller.motion else {
+            motionAvailable = false
+            return
+        }
+        motionAvailable = true
+        if motion.sensorsRequireManualActivation {
+            motion.sensorsActive = motionSensorsRequested
+        }
+        logger.notice(
+            "Motion configured; separateGravity=\(motion.hasGravityAndUserAcceleration) manualActivation=\(motion.sensorsRequireManualActivation) sensorsActive=\(motion.sensorsActive)"
+        )
+        let inputGate = microphoneInputGate
+        motion.valueChangedHandler = { [weak self, inputGate] motion in
+            guard inputGate.acceptsGameControllerInput else { return }
+            let gravity = motion.gravity
+            let userAcceleration = motion.userAcceleration
+            let totalAcceleration = motion.acceleration
+            let rotation = motion.rotationRate
+            let raw = RawControllerMotionSample(
+                reportedGravityX: gravity.x,
+                reportedGravityY: gravity.y,
+                reportedGravityZ: gravity.z,
+                reportedUserAccelerationX: userAcceleration.x,
+                reportedUserAccelerationY: userAcceleration.y,
+                reportedUserAccelerationZ: userAcceleration.z,
+                totalAccelerationX: totalAcceleration.x,
+                totalAccelerationY: totalAcceleration.y,
+                totalAccelerationZ: totalAcceleration.z,
+                rotationX: rotation.x,
+                rotationY: rotation.y,
+                rotationZ: rotation.z,
+                hasSeparateGravity: motion.hasGravityAndUserAcceleration,
+                timestamp: ProcessInfo.processInfo.systemUptime
+            )
+            Task { @MainActor in
+                self?.handleMotionReading(raw)
+            }
+        }
+    }
+
+    private func handleMotionReading(_ raw: RawControllerMotionSample) {
+        let sample = motionNormalizer.normalize(raw)
+        onEvent?(.motion(sample))
     }
 
     private func bind(

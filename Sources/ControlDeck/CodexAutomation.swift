@@ -345,7 +345,89 @@ final class CodexAutomation: ObservableObject {
         case .showControllerOverlay:
             lastResult = "Controller overlay"
             return true
+        case .deleteTextWithConfirmation:
+            return confirmDeleteFocusedText()
         }
+    }
+
+    @discardableResult
+    func confirmDeleteFocusedText() -> Bool {
+        guard accessibilityTrusted || AXIsProcessTrusted() else {
+            requestAccessibility()
+            return false
+        }
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            systemWide,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedValue
+        ) == .success,
+        let focused = focusedValue as! AXUIElement?
+        else {
+            lastResult = "Focus a text field before shaking"
+            return false
+        }
+
+        let role = stringAttribute(focused, kAXRoleAttribute)
+        let textRoles = [kAXTextAreaRole, kAXTextFieldRole, kAXComboBoxRole]
+        guard let role, textRoles.contains(role) else {
+            lastResult = "Shake to delete only works in a focused text field"
+            return false
+        }
+        var settable = DarwinBoolean(false)
+        guard AXUIElementIsAttributeSettable(
+            focused,
+            kAXValueAttribute as CFString,
+            &settable
+        ) == .success,
+        settable.boolValue
+        else {
+            lastResult = "This text field does not allow safe clearing"
+            return false
+        }
+        var value: CFTypeRef?
+        _ = AXUIElementCopyAttributeValue(
+            focused,
+            kAXValueAttribute as CFString,
+            &value
+        )
+        guard let text = value as? String, !text.isEmpty else {
+            lastResult = "The focused text field is already empty"
+            return false
+        }
+
+        var processIdentifier: pid_t = 0
+        AXUIElementGetPid(focused, &processIdentifier)
+        let app = NSRunningApplication(processIdentifier: processIdentifier)
+        let appName = app?.localizedName ?? "the current app"
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Delete all text?"
+        alert.informativeText =
+            "This will clear the focused text field in \(appName). " +
+            "The action cannot be undone by ControlDeck."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        NSApp.activate(ignoringOtherApps: true)
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            _ = app?.activate(options: [.activateAllWindows])
+            lastResult = "Delete cancelled"
+            return false
+        }
+        let result = AXUIElementSetAttributeValue(
+            focused,
+            kAXValueAttribute as CFString,
+            "" as CFString
+        )
+        _ = app?.activate(options: [.activateAllWindows])
+        lastResult = result == .success
+            ? "Text deleted"
+            : "The text field changed before it could be cleared"
+        return result == .success
     }
 
     @discardableResult

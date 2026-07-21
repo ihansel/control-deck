@@ -1,208 +1,151 @@
 import Combine
 import Foundation
 
-enum SkillDirection: String, Codable, CaseIterable, Identifiable, Sendable {
-    case up
-    case right
-    case down
-    case left
+struct ProfileWheelSlot: Codable, Equatable, Identifiable, Sendable {
+    let position: Int
+    var profileKind: ProfileKind
 
-    var id: String { rawValue }
+    var id: Int { position }
 
-    var label: String {
-        switch self {
-        case .up: "Up"
-        case .right: "Right"
-        case .down: "Down"
-        case .left: "Left"
+    var positionLabel: String {
+        switch position {
+        case 0: "Top"
+        case 1: "Upper right"
+        case 2: "Right"
+        case 3: "Lower right"
+        case 4: "Bottom"
+        case 5: "Lower left"
+        case 6: "Left"
+        case 7: "Upper left"
+        default: "Slot \(position + 1)"
         }
     }
 
-    var arrow: String {
-        switch self {
-        case .up: "↑"
-        case .right: "→"
-        case .down: "↓"
-        case .left: "←"
-        }
-    }
-
-    var input: ControllerInput {
-        switch self {
-        case .up: .dpadUp
-        case .right: .dpadRight
-        case .down: .dpadDown
-        case .left: .dpadLeft
-        }
-    }
-
-    init?(input: ControllerInput) {
-        switch input {
-        case .dpadUp: self = .up
-        case .dpadRight: self = .right
-        case .dpadDown: self = .down
-        case .dpadLeft: self = .left
-        default: return nil
-        }
-    }
-}
-
-struct CodexSkillSlot: Codable, Equatable, Identifiable, Sendable {
-    var direction: SkillDirection
-    var title: String
-    var prompt: String
-
-    var id: String { direction.rawValue }
-
-    static let defaults: [CodexSkillSlot] = [
-        .init(
-            direction: .up,
-            title: "Review changes",
-            prompt: "Review the current changes. Prioritise correctness, regressions, security, and missing tests."
-        ),
-        .init(
-            direction: .right,
-            title: "Debug",
-            prompt: "Investigate the current problem, identify the root cause, and implement and verify the fix."
-        ),
-        .init(
-            direction: .down,
-            title: "Write tests",
-            prompt: "Add focused tests for the current work, covering important behavior and likely regressions, then run them."
-        ),
-        .init(
-            direction: .left,
-            title: "Refactor",
-            prompt: "Refactor the current implementation for clarity and maintainability without changing its behavior, then verify it."
-        )
+    static let defaults: [ProfileWheelSlot] = [
+        .init(position: 0, profileKind: .codex),
+        .init(position: 1, profileKind: .chrome),
+        .init(position: 2, profileKind: .claude),
+        .init(position: 3, profileKind: .spotify),
+        .init(position: 4, profileKind: .general),
+        .init(position: 5, profileKind: .finder),
+        .init(position: 6, profileKind: .terminal),
+        .init(position: 7, profileKind: .slack)
     ]
-}
-
-enum ShiftFaceCommand: String, CaseIterable, Identifiable, Sendable {
-    case approve
-    case decline
-    case send
-    case fastMode
-
-    var id: String { rawValue }
-
-    var input: ControllerInput {
-        switch self {
-        case .approve: .cross
-        case .decline: .circle
-        case .send: .square
-        case .fastMode: .triangle
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .approve: "Approve"
-        case .decline: "Decline"
-        case .send: "Send"
-        case .fastMode: "Fast mode"
-        }
-    }
-
-    var action: MappedAction {
-        switch self {
-        case .approve: .codexApprove
-        case .decline: .codexDecline
-        case .send: .codexSend
-        case .fastMode: .codexFastMode
-        }
-    }
-
-    init?(input: ControllerInput) {
-        guard let command = Self.allCases.first(where: { $0.input == input })
-        else {
-            return nil
-        }
-        self = command
-    }
 }
 
 @MainActor
 final class ShiftLayerStore: ObservableObject {
-    @Published private(set) var slots: [CodexSkillSlot]
+    @Published private(set) var profileSlots: [ProfileWheelSlot]
 
-    static let storageKey = "shiftLayerSettings.v1"
+    static let storageKey = "profileWheelSettings.v1"
+    private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         if let data = defaults.data(forKey: Self.storageKey),
            let decoded = try? JSONDecoder().decode(
-               [CodexSkillSlot].self,
+               [ProfileWheelSlot].self,
                from: data
            ) {
-            slots = Self.merged(decoded)
+            profileSlots = Self.merged(decoded)
         } else {
-            slots = CodexSkillSlot.defaults
+            profileSlots = ProfileWheelSlot.defaults
         }
-        persist(to: defaults)
+        persist()
     }
 
-    func slot(for direction: SkillDirection) -> CodexSkillSlot {
-        slots.first(where: { $0.direction == direction }) ??
-            CodexSkillSlot.defaults.first(where: {
-                $0.direction == direction
-            })!
+    func slot(at position: Int) -> ProfileWheelSlot {
+        profileSlots.first(where: { $0.position == position }) ??
+            ProfileWheelSlot.defaults[position]
     }
 
-    func updateTitle(_ title: String, for direction: SkillDirection) {
-        update(direction) { $0.title = title }
-    }
+    func setProfile(_ kind: ProfileKind, at position: Int) {
+        guard let targetIndex = profileSlots.firstIndex(where: {
+            $0.position == position
+        }) else { return }
+        guard profileSlots[targetIndex].profileKind != kind else { return }
 
-    func updatePrompt(_ prompt: String, for direction: SkillDirection) {
-        update(direction) { $0.prompt = prompt }
+        let displaced = profileSlots[targetIndex].profileKind
+        if let existingIndex = profileSlots.firstIndex(where: {
+            $0.profileKind == kind
+        }) {
+            profileSlots[existingIndex].profileKind = displaced
+        }
+        profileSlots[targetIndex].profileKind = kind
+        persist()
     }
 
     func reset() {
-        slots = CodexSkillSlot.defaults
+        profileSlots = ProfileWheelSlot.defaults
         persist()
     }
 
     func reloadExternalChanges() {
-        UserDefaults.standard.synchronize()
-        guard let data = UserDefaults.standard.data(forKey: Self.storageKey),
+        defaults.synchronize()
+        guard let data = defaults.data(forKey: Self.storageKey),
               let decoded = try? JSONDecoder().decode(
-                  [CodexSkillSlot].self,
+                  [ProfileWheelSlot].self,
                   from: data
               )
         else {
             return
         }
         let merged = Self.merged(decoded)
-        guard merged != slots else { return }
-        slots = merged
+        guard merged != profileSlots else { return }
+        profileSlots = merged
     }
 
-    private func update(
-        _ direction: SkillDirection,
-        change: (inout CodexSkillSlot) -> Void
-    ) {
-        guard let index = slots.firstIndex(where: {
-            $0.direction == direction
-        }) else {
-            return
-        }
-        change(&slots[index])
-        persist()
-    }
-
-    private func persist(to defaults: UserDefaults = .standard) {
-        guard let data = try? JSONEncoder().encode(slots) else { return }
+    private func persist() {
+        guard let data = try? JSONEncoder().encode(profileSlots) else { return }
         defaults.set(data, forKey: Self.storageKey)
     }
 
     private static func merged(
-        _ saved: [CodexSkillSlot]
-    ) -> [CodexSkillSlot] {
-        SkillDirection.allCases.map { direction in
-            saved.first(where: { $0.direction == direction }) ??
-                CodexSkillSlot.defaults.first(where: {
-                    $0.direction == direction
-                })!
+        _ saved: [ProfileWheelSlot]
+    ) -> [ProfileWheelSlot] {
+        ProfileWheelSlot.defaults.map { fallback in
+            guard let savedSlot = saved.first(where: {
+                $0.position == fallback.position
+            }), ProfileKind.allCases.contains(savedSlot.profileKind)
+            else {
+                return fallback
+            }
+            return savedSlot
         }
+    }
+}
+
+struct RadialProfileSelector: Sendable {
+    private(set) var selectedIndex: Int?
+    let activationThreshold: Float
+    let neutralThreshold: Float
+
+    init(
+        activationThreshold: Float = 0.48,
+        neutralThreshold: Float = 0.28
+    ) {
+        self.activationThreshold = activationThreshold
+        self.neutralThreshold = neutralThreshold
+    }
+
+    mutating func update(x: Float, y: Float) -> Int? {
+        let magnitude = sqrt((x * x) + (y * y))
+        if magnitude <= neutralThreshold {
+            selectedIndex = nil
+            return nil
+        }
+        guard magnitude >= activationThreshold else { return selectedIndex }
+
+        var angle = atan2(Double(x), Double(y))
+        if angle < 0 { angle += 2 * .pi }
+        selectedIndex = Int(
+            floor((angle + (.pi / 8)) / (.pi / 4))
+        ) % 8
+        return selectedIndex
+    }
+
+    mutating func reset() {
+        selectedIndex = nil
     }
 }
 

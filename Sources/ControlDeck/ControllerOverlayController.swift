@@ -6,13 +6,11 @@ struct ControllerOverlayTask {
     let state: CodexTaskState
 }
 
-struct ControllerOverlayItem: Identifiable {
-    let input: ControllerInput
-    let title: String
-    let detail: String
-    let systemImage: String
+struct ProfileWheelEntry: Identifiable {
+    let slot: ProfileWheelSlot
+    let profile: ControllerProfile
 
-    var id: String { input.rawValue }
+    var id: Int { slot.position }
 }
 
 @MainActor
@@ -20,23 +18,26 @@ final class ControllerOverlayController {
     private var panel: NSPanel?
     private var hideWorkItem: DispatchWorkItem?
 
-    func showRadial(
-        profile: ControllerProfile,
-        task: ControllerOverlayTask?,
-        slots: [CodexSkillSlot],
-        selectedInput: ControllerInput? = nil
+    func showProfileWheel(
+        profiles: [ControllerProfile],
+        slots: [ProfileWheelSlot],
+        activeKind: ProfileKind,
+        selectedIndex: Int? = nil
     ) {
         hideWorkItem?.cancel()
-        let items = radialItems(slots: slots)
-        let view = RadialControllerOverlay(
-            profileName: profile.name,
-            task: task,
-            items: items,
-            selectedInput: selectedInput
+        let entries = slots.compactMap { slot in
+            profiles.first(where: { $0.kind == slot.profileKind }).map {
+                ProfileWheelEntry(slot: slot, profile: $0)
+            }
+        }
+        let view = ProfileWheelOverlay(
+            entries: entries,
+            activeKind: activeKind,
+            selectedIndex: selectedIndex
         )
         show(
             AnyView(view),
-            size: NSSize(width: 680, height: 680)
+            size: NSSize(width: 760, height: 760)
         )
     }
 
@@ -60,12 +61,14 @@ final class ControllerOverlayController {
     func showContext(
         profile: ControllerProfile,
         task: ControllerOverlayTask?,
-        slots: [CodexSkillSlot]
+        profiles: [ControllerProfile],
+        slots: [ProfileWheelSlot]
     ) {
         hideWorkItem?.cancel()
         let view = ContextControllerOverlay(
             profile: profile,
             task: task,
+            profiles: profiles,
             slots: slots
         )
         show(
@@ -87,49 +90,18 @@ final class ControllerOverlayController {
         })
     }
 
-    private func radialItems(
-        slots: [CodexSkillSlot]
-    ) -> [ControllerOverlayItem] {
-        let skillItems: [ControllerOverlayItem] =
-            SkillDirection.allCases.compactMap { direction in
-            guard let slot = slots.first(where: {
-                $0.direction == direction
-            }) else {
-                return nil
-            }
-            return ControllerOverlayItem(
-                input: direction.input,
-                title: slot.title,
-                detail: "Custom skill",
-                systemImage: "sparkles"
-            )
-        }
-        let faceItems = ShiftFaceCommand.allCases.map { command in
-            ControllerOverlayItem(
-                input: command.input,
-                title: command.title,
-                detail: "Codex",
-                systemImage: systemImage(for: command)
-            )
-        }
-        return skillItems + faceItems
-    }
-
-    private func systemImage(for command: ShiftFaceCommand) -> String {
-        switch command {
-        case .approve: "checkmark"
-        case .decline: "xmark"
-        case .send: "paperplane.fill"
-        case .fastMode: "bolt.fill"
-        }
-    }
-
     private func show(_ view: AnyView, size: NSSize) {
         let panel = panel ?? makePanel()
         self.panel = panel
+        let animateEntrance = !panel.isVisible || panel.alphaValue < 0.05
         panel.setContentSize(size)
         panel.contentView = NSHostingView(rootView: view)
-        position(panel)
+        if animateEntrance { position(panel) }
+        guard animateEntrance else {
+            panel.alphaValue = 1
+            panel.orderFrontRegardless()
+            return
+        }
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { context in
@@ -193,112 +165,198 @@ private struct OverlaySurface<Content: View>: View {
     }
 }
 
-private struct RadialControllerOverlay: View {
-    let profileName: String
-    let task: ControllerOverlayTask?
-    let items: [ControllerOverlayItem]
-    let selectedInput: ControllerInput?
+private struct ProfileWheelOverlay: View {
+    let entries: [ProfileWheelEntry]
+    let activeKind: ProfileKind
+    let selectedIndex: Int?
+
+    private let wheelSize: CGFloat = 550
 
     var body: some View {
-        OverlaySurface {
-            GeometryReader { proxy in
-                ZStack {
-                    Circle()
-                        .fill(.black.opacity(0.12))
-                        .frame(width: 410, height: 410)
-                    Circle()
-                        .stroke(.white.opacity(0.28), lineWidth: 1)
-                        .frame(width: 410, height: 410)
-
-                    center
-
-                    ForEach(Array(items.enumerated()), id: \.element.id) {
-                        index, item in
-                        let angle = angle(for: item.input)
-                        let radius = min(proxy.size.width, proxy.size.height) *
-                            0.36
-                        itemView(item)
-                            .offset(
-                                x: cos(angle) * radius,
-                                y: sin(angle) * radius
-                            )
+        GeometryReader { proxy in
+            ZStack {
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .frame(width: wheelSize + 48, height: wheelSize + 48)
+                    .overlay {
+                        Circle().stroke(.white.opacity(0.2), lineWidth: 1)
                     }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .shadow(color: .black.opacity(0.38), radius: 38, y: 18)
+
+                wheel
+                centerHub
+                selectedTitle
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    private var center: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "gamecontroller.fill")
-                .font(.system(size: 27, weight: .semibold))
-            Text("OPTIONS")
+    private var wheel: some View {
+        ZStack {
+            ForEach(entries) { entry in
+                let selected = selectedIndex == entry.slot.position
+                let angle = angle(for: entry.slot.position)
+
+                AnnularSector(
+                    startDegrees: angle - 20.5,
+                    endDegrees: angle + 20.5,
+                    innerRatio: 0.39,
+                    outerRatio: selected ? 0.99 : 0.92
+                )
+                .fill(
+                    selected
+                        ? Color(red: 0.06, green: 0.67, blue: 0.94)
+                        : Color(red: 0.08, green: 0.12, blue: 0.15)
+                            .opacity(0.9)
+                )
+                .overlay {
+                    AnnularSector(
+                        startDegrees: angle - 20.5,
+                        endDegrees: angle + 20.5,
+                        innerRatio: 0.39,
+                        outerRatio: selected ? 0.99 : 0.92
+                    )
+                    .stroke(
+                        selected
+                            ? Color(red: 1, green: 0.74, blue: 0.2)
+                            : .white.opacity(0.18),
+                        lineWidth: selected ? 6 : 1.5
+                    )
+                }
+                .offset(radialOffset(angle: angle, distance: selected ? 10 : 0))
+                .animation(.spring(response: 0.18, dampingFraction: 0.78), value: selected)
+
+                wheelLabel(entry, selected: selected)
+                    .offset(radialOffset(angle: angle, distance: 185 + (selected ? 13 : 0)))
+                    .animation(.spring(response: 0.18, dampingFraction: 0.78), value: selected)
+            }
+        }
+        .frame(width: wheelSize, height: wheelSize)
+    }
+
+    private var centerHub: some View {
+        VStack(spacing: 9) {
+            Image(systemName: "l.joystick.tilt.up")
+                .font(.system(size: 30, weight: .semibold))
+                .foregroundStyle(.white)
+            Text("PROFILE WHEEL")
                 .font(.caption2.weight(.bold))
-                .tracking(1.5)
-            Text(profileName)
-                .font(.headline)
-            if let task {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(Color(nsColor: task.state.color))
-                        .frame(width: 7, height: 7)
-                    Text(task.title)
-                        .lineLimit(1)
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: 180)
-            }
+                .tracking(1.7)
+                .foregroundStyle(.white.opacity(0.78))
+            Text("Left stick")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.white.opacity(0.58))
         }
-        .frame(width: 210, height: 145)
-        .background(.regularMaterial, in: Circle())
-    }
-
-    private func itemView(_ item: ControllerOverlayItem) -> some View {
-        let selected = selectedInput == item.input
-        return VStack(spacing: 5) {
-            HStack(spacing: 7) {
-                Text(item.input.shortLabel)
-                    .font(.caption.weight(.bold))
-                    .frame(minWidth: 24)
-                Image(systemName: item.systemImage)
-                    .font(.caption.weight(.semibold))
-            }
-            Text(item.title)
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
-        }
-        .foregroundStyle(selected ? .black : .primary)
-        .padding(.horizontal, 12)
-        .frame(width: 132, height: 64)
+        .frame(width: 190, height: 190)
         .background(
-            selected ? Color.accentColor : Color.white.opacity(0.88),
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            Color(red: 0.035, green: 0.055, blue: 0.07).opacity(0.94),
+            in: Circle()
         )
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(
-                    selected ? .white.opacity(0.8) : .white.opacity(0.35),
-                    lineWidth: selected ? 2 : 1
-                )
+            Circle().stroke(.white.opacity(0.18), lineWidth: 1.5)
         }
-        .scaleEffect(selected ? 1.08 : 1)
-        .animation(.easeOut(duration: 0.1), value: selected)
     }
 
-    private func angle(for input: ControllerInput) -> Double {
-        switch input {
-        case .dpadUp: -.pi / 2
-        case .triangle: -.pi / 4
-        case .dpadRight: 0
-        case .circle: .pi / 4
-        case .dpadDown: .pi / 2
-        case .cross: .pi * 3 / 4
-        case .dpadLeft: .pi
-        case .square: .pi * 5 / 4
-        default: 0
+    private var selectedTitle: some View {
+        VStack(spacing: 5) {
+            Text(selectedEntry?.profile.name ?? "Choose a profile")
+                .font(.system(size: 25, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.5), radius: 5, y: 2)
+            Text(
+                selectedEntry == nil
+                    ? "Move the left stick"
+                    : "Release Options to switch"
+            )
+            .font(.callout.weight(.medium))
+            .foregroundStyle(.white.opacity(0.76))
         }
+        .offset(y: 331)
+    }
+
+    private func wheelLabel(
+        _ entry: ProfileWheelEntry,
+        selected: Bool
+    ) -> some View {
+        VStack(spacing: 6) {
+            ProfileLogoView(profile: entry.profile, size: selected ? 56 : 49)
+                .shadow(color: .black.opacity(0.45), radius: 5, y: 2)
+            HStack(spacing: 4) {
+                Text(entry.profile.name)
+                if entry.profile.kind == activeKind {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 6, height: 6)
+                }
+            }
+            .font(.system(size: 12, weight: .bold, design: .rounded))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(width: 92)
+        }
+    }
+
+    private var selectedEntry: ProfileWheelEntry? {
+        guard let selectedIndex else { return nil }
+        return entries.first(where: { $0.slot.position == selectedIndex })
+    }
+
+    private func angle(for position: Int) -> Double {
+        -90 + (Double(position) * 45)
+    }
+
+    private func radialOffset(
+        angle: Double,
+        distance: CGFloat
+    ) -> CGSize {
+        let radians = angle * .pi / 180
+        return CGSize(
+            width: cos(radians) * distance,
+            height: sin(radians) * distance
+        )
+    }
+}
+
+private struct AnnularSector: Shape {
+    let startDegrees: Double
+    let endDegrees: Double
+    let innerRatio: CGFloat
+    let outerRatio: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) / 2
+        let innerRadius = radius * innerRatio
+        let outerRadius = radius * outerRatio
+        let steps = 24
+        var path = Path()
+
+        for step in 0...steps {
+            let progress = Double(step) / Double(steps)
+            let degrees = startDegrees + ((endDegrees - startDegrees) * progress)
+            let point = polarPoint(center, radius: outerRadius, degrees: degrees)
+            step == 0 ? path.move(to: point) : path.addLine(to: point)
+        }
+        for step in stride(from: steps, through: 0, by: -1) {
+            let progress = Double(step) / Double(steps)
+            let degrees = startDegrees + ((endDegrees - startDegrees) * progress)
+            path.addLine(to: polarPoint(center, radius: innerRadius, degrees: degrees))
+        }
+        path.closeSubpath()
+        return path
+    }
+
+    private func polarPoint(
+        _ center: CGPoint,
+        radius: CGFloat,
+        degrees: Double
+    ) -> CGPoint {
+        let radians = degrees * .pi / 180
+        return CGPoint(
+            x: center.x + (cos(radians) * radius),
+            y: center.y + (sin(radians) * radius)
+        )
     }
 }
 
@@ -355,14 +413,14 @@ private struct ReasoningControllerOverlay: View {
 private struct ContextControllerOverlay: View {
     let profile: ControllerProfile
     let task: ControllerOverlayTask?
-    let slots: [CodexSkillSlot]
+    let profiles: [ControllerProfile]
+    let slots: [ProfileWheelSlot]
 
     var body: some View {
         OverlaySurface {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: 13) {
-                    Image(systemName: profile.kind.systemImage)
-                        .font(.system(size: 23, weight: .semibold))
+                    ProfileLogoView(profile: profile, size: 36)
                         .frame(width: 44, height: 44)
                         .background(
                             Color.accentColor.opacity(0.16),
@@ -417,20 +475,21 @@ private struct ContextControllerOverlay: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text("Hold Options")
                             .font(.headline)
-                        Text("Four custom skills + Approve, Decline, Send and Fast mode")
+                        Text("Choose one of eight profiles with the left stick")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
                     HStack(spacing: 6) {
                         ForEach(slots) { slot in
-                            Text(slot.direction.arrow)
-                                .font(.caption.weight(.bold))
-                                .frame(width: 28, height: 28)
-                                .background(
-                                    .white.opacity(0.6),
-                                    in: RoundedRectangle(cornerRadius: 8)
+                            if let wheelProfile = profiles.first(where: {
+                                $0.kind == slot.profileKind
+                            }) {
+                                ProfileLogoView(
+                                    profile: wheelProfile,
+                                    size: 28
                                 )
+                            }
                         }
                     }
                 }

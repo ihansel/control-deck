@@ -708,19 +708,19 @@ private struct ShoulderCallout: Identifiable {
 private let shoulderCallouts: [ShoulderCallout] = [
     .init(
         input: .l2,
-        labelX: 0.208,
+        labelX: 0.180,
         labelY: 0.105,
-        elbowX: 0.310,
-        targetX: 0.332,
+        elbowX: 0.282,
+        targetX: 0.305,
         targetY: 0.137,
         isLeading: true
     ),
     .init(
         input: .l1,
-        labelX: 0.208,
+        labelX: 0.180,
         labelY: 0.185,
-        elbowX: 0.310,
-        targetX: 0.335,
+        elbowX: 0.282,
+        targetX: 0.305,
         targetY: 0.166,
         isLeading: true
     ),

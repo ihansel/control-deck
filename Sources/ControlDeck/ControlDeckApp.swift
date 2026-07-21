@@ -1,7 +1,10 @@
+import AppKit
 import SwiftUI
 
 @main
 struct ControlDeckApp: App {
+    @NSApplicationDelegateAdaptor(ControlDeckAppDelegate.self)
+    private var appDelegate
     @StateObject private var model = AppModel()
 
     var body: some Scene {
@@ -17,6 +20,15 @@ struct ControlDeckApp: App {
                 .onAppear { model.start() }
         } label: {
             Image(systemName: model.controller.isConnected ? "gamecontroller.fill" : "gamecontroller")
+        }
+    }
+}
+
+private final class ControlDeckAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 }

@@ -50,7 +50,7 @@ in their own context.
 
 | Stay in flow | Use the whole controller | Make it yours |
 | --- | --- | --- |
-| Create tasks, dictate prompts, stop runs, review changes and jump between work without hunting for shortcuts. | Use analogue pointer control, smooth scrolling, touch gestures, click-and-drag, screenshots and tactile feedback. | Remap every input, tune acceleration and dead zones, add custom skills and let profiles follow the foreground app. |
+| Create tasks, dictate prompts, stop runs, review changes and jump between work without hunting for shortcuts. | Use analogue pointer control, smooth scrolling, touch gestures, click-and-drag, screenshots and tactile feedback. | Remap every input, tune acceleration and dead zones, configure an eight-app profile wheel and let profiles follow the foreground app. |
 
 ### A few favourite details
 
@@ -58,12 +58,14 @@ in their own context.
   walkie-talkie and release when you are done.
 - **The controller reflects Codex state.** Light and haptics make thinking,
   completion and attention states feel immediate.
-- **Options is a real command layer.** Hold it for Approve, Decline, Send, Fast
-  mode and four editable skill slots without crowding the everyday controls.
+- **Options is a profile wheel.** Hold it, point the left stick toward one of
+  eight app profiles, then release to switch without crowding everyday controls.
 - **The pointer can replace a mouse.** Move across multiple displays, scroll in
   two axes, drag windows, highlight text and right-click.
 - **Profiles follow your work.** Move from Codex to Terminal, a meeting or a
   creative app and ControlDeck changes with you.
+- **Motion is useful only when you want it.** A hard shake can safely clear a
+  text field after confirmation; every other gyro gesture is opt-in.
 
 ## Meet your new coding loop
 
@@ -83,14 +85,43 @@ The supplied Codex profile is designed around a simple physical vocabulary:
 | Show the current profile and mappings | Touchpad click |
 | Toggle hands-free dictation | Microphone button |
 
-Hold **Options** for the command layer:
-
-- D-pad: four editable Codex skill slots
-- Cross / Circle: Approve / Decline
-- Square / Triangle: Send / toggle Fast mode
-- Create + right stick: step reasoning smarter or faster
+Hold **Options** for the profile wheel. Point the **left stick** toward one of
+eight app logos, then release Options to switch. The defaults are Codex, Chrome,
+Claude, Spotify, General macOS, Finder, Terminal and Slack; every slot can be
+swapped in ControlDeck. Hold **Create + right stick** to step reasoning smarter
+or faster.
 
 Everything can be changed in the mapping editor and is saved immediately.
+
+### Screen capture editor
+
+Hold the mapped screen-capture trigger (R2 in the default Codex profile), move
+the left stick to select an area, then release. ControlDeck copies the original
+image to the clipboard and immediately opens a focused annotation editor. The
+editor provides highlighter, pen, arrow, rectangle, text and redact tools plus
+undo, redo, PNG save and edited-image copy.
+
+The controller remains fully usable inside the editor: left stick moves the
+pointer, Cross draws, L1/R1 changes tools, Square/Triangle undo and redo,
+Touchpad click copies, Create saves, Options finishes, and Circle dismisses the
+editor while leaving the original capture on the clipboard. Open **Screen
+Capture** in ControlDeck to change clipboard behavior, editor presentation,
+default tool, colour and line size.
+
+### Gyro controls
+
+Open **Gyro** to view live tilt and shake input, tune per-profile thresholds,
+and map hard shake, four held tilts, or clockwise and counter-clockwise twists.
+Only **hard shake → delete text with confirmation** is assigned by default.
+The shake recognizer requires three strong alternating impulses and then shows
+a native warning before clearing anything. It only operates on a focused,
+editable text field; cancelling leaves the text untouched.
+
+The optional suggested set maps tilts to navigation and window actions and
+twists to previous/next tabs. These remain opt-in. **Tilt Run** is a timed 3D
+rolling-ball game with seeded procedural courses, moving obstacles, time
+tokens, checkpoints and a finish gate. It pauses normal gyro actions only
+while a run is active.
 
 ## The undocumented Bluetooth microphone
 
@@ -201,8 +232,15 @@ Gatekeeper. See [the distribution guide](Docs/Distribution.md).
 2. Launch ControlDeck and open **Setup**.
 3. Grant Accessibility permission for pointer and keyboard automation.
 4. Run the safe hardware self-test: one gentle haptic and one short tone.
-5. Open **Button Mapping**, **Touchpad** or **Pointer** and make the controller
-   feel like yours.
+5. Take the optional three-minute tutorial when Setup offers it, or skip it and
+   replay it later from the same page.
+6. Open **Button Mapping**, **Touchpad**, **Gyro** or **Pointer** when you are
+   ready to make the controller feel like yours.
+
+The tutorial introduces pointer and scrolling, dictation, screen capture and
+the eight-profile wheel. Its advanced page links directly to Button Mapping,
+Touchpad, Pointer, Screen Capture, Shift Layer, Profiles, Gyro and Customize
+with Codex so new users can start simply without losing access to deeper tools.
 
 To pair a DualSense wirelessly, disconnect USB and hold **Create + PS** until
 the light bar flashes rapidly. Select **DualSense Wireless Controller** in
@@ -217,12 +255,12 @@ ControlDeck ships with a `control-deck-customizer` skill and a deliberately
 narrow local MCP server. Open **Customize with Codex**, install the readable
 local workspace and describe the change you want:
 
-> “Make R3 open Quick Chat in Codex, and use Options + D-pad Left for my PR
-> review skill.”
+> “Make R3 open Quick Chat in Codex, and put Xcode in slot 4 of my profile
+> wheel.”
 
-The customization server can only read and update ControlDeck profiles and the
-four custom skill slots. It exposes no general shell, filesystem, network,
-permission or download tool.
+The customization server can only read and update ControlDeck profiles,
+per-profile gyro settings and the eight profile-wheel slots. It exposes no
+general shell, filesystem, network, permission or download tool.
 
 ## Privacy and safety
 
@@ -250,9 +288,9 @@ Run a full debug build:
 swift build -c debug
 ```
 
-The suite covers default mappings, shift layers, gesture classification,
-pointer behaviour, task-state inference, profile persistence, Bluetooth audio
-framing and the customization security boundary.
+The suite covers default mappings, profile-wheel selection, touch and gyro gesture
+classification, pointer behaviour, task-state inference, profile persistence,
+Bluetooth audio framing and the customization security boundary.
 
 ### Project structure
 
@@ -302,9 +340,9 @@ the bundled constrained customization workspace.
 
 ## Licence and credits
 
-ControlDeck is available under the [MIT License](LICENSE). Opus and Apple
-sample-derived components retain their notices in `Resources/ThirdPartyLicenses`
-and `Drivers/DualSenseMicrophone`.
+ControlDeck is available under the [MIT License](LICENSE). Opus, Three.js and
+Apple sample-derived components retain their notices alongside the bundled
+resources and in `Drivers/DualSenseMicrophone`.
 
 Built by [@ihansel](https://x.com/ihansel) with Codex and a real controller on
 the desk.

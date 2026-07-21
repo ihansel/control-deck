@@ -5,20 +5,23 @@ description: Customize ControlDeck mappings, pointer settings, touch gestures, a
 
 # PS5 Controller Customizer
 
-Use the `control-deck` MCP tools for profile and custom skill-slot changes.
+Use the `control-deck` MCP tools for profile and profile-wheel changes.
 Edit the app source only when the user explicitly requests behavior that the
 preference schema cannot represent.
 
 ## Workflow
 
-1. Call `list_profiles`, or `get_shift_layer` for an Options + D-pad skill.
+1. Call `list_profiles`, or `get_profile_wheel` for the eight Options-wheel
+   slots.
 2. Call `get_profile` for every profile that may change.
 3. Explain the proposed mapping in one concise sentence.
 4. Use the narrowest mutation tool:
    - `set_button_mapping` for one button.
    - `set_pointer` for the pointer stick or tracking values.
+   - `set_gyro` for motion thresholds and enablement.
+   - `set_gyro_mapping` for one shake, tilt, or twist gesture.
    - `assign_profile_apps` for foreground-app switching.
-   - `set_skill_slot` for one Options + D-pad title and prompt.
+   - `set_profile_wheel_slot` to assign or swap one of eight profiles.
 5. Read the changed profile again and report the exact result.
 6. Tell the user to return to ControlDeck so the running app reloads settings.
 
@@ -38,8 +41,9 @@ preference schema cannot represent.
 - “Make the left stick control the cursor in Claude.”
 - “Map Terminal R3 to interrupt instead of clear.”
 - “Put raise hand on Triangle in my Meetings profile.”
+- “Map a clockwise gyro twist to the next browser tab.”
 - “Map Triangle to open the browser address bar.”
 - “Use my 8BitDo controller with the General profile.”
-- “Make Options + D-pad Up run my release-check skill.”
+- “Put Xcode in slot 4 of my Options profile wheel.”
 - “Add a new controller action.” This requires a source change because MCP
   profile tools can select behavior but cannot define executable behavior.
