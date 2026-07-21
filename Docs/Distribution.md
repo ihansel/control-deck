@@ -24,7 +24,9 @@ export NOTARYTOOL_PROFILE="control-deck-notary"
 
 The script signs the bundled Opus framework and ControlDeck with hardened
 runtime, submits the archive to Apple, staples and validates the ticket, runs
-Gatekeeper assessment, and only then replaces the release ZIP in `dist`.
+Gatekeeper assessment, and only then replaces the release ZIP in `dist`. It
+builds separate arm64 and x86_64 executables and merges them into one universal
+app, so the public download supports both Apple Silicon and Intel Macs.
 
 For an already-built app bundle, append `--no-build`.
 

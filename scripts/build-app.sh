@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BINARY=""
 RESOURCE_BUNDLE=""
+ARM64_TRIPLE="arm64-apple-macosx14.0"
+X86_64_TRIPLE="x86_64-apple-macosx14.0"
+ARM64_SCRATCH="$ROOT/.build/release-arm64"
+X86_64_SCRATCH="$ROOT/.build/release-x86_64"
+UNIVERSAL_OUTPUT="$ROOT/.build/release-universal/control-deck"
 OPUS_PREFIX="$("$ROOT/scripts/build-opus.sh" --print-prefix)"
 OPUS_DYLIB="$OPUS_PREFIX/lib/libopus.0.dylib"
 OPUS_DEPLOYMENT_TARGET="14.0"
@@ -28,6 +33,17 @@ verify_bundled_opus() {
       "$OPUS_DEPLOYMENT_TARGET" ]]
     [[ "$(otool -arch "$architecture" -D "$binary" | sed -n '2p')" == \
       "@rpath/libopus.0.dylib" ]]
+  done
+}
+
+verify_universal_executable() {
+  local binary="$1"
+
+  lipo "$binary" -verify_arch arm64 x86_64
+  local architecture
+  for architecture in arm64 x86_64; do
+    [[ "$(minimum_macos_version "$binary" "$architecture")" == \
+      "$OPUS_DEPLOYMENT_TARGET" ]]
   done
 }
 
@@ -75,16 +91,44 @@ package_app() {
     "$app"
   verify_bundled_opus "$frameworks/libopus.0.dylib"
   codesign --verify --deep --strict "$app"
+  verify_universal_executable "$macos/control-deck"
   echo "$app"
 }
 
 cd "$ROOT"
 "$ROOT/scripts/build-opus.sh"
 export PKG_CONFIG_PATH="$OPUS_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-swift build -c release
-BINARY_DIR="$(swift build -c release --show-bin-path)"
-BINARY="$BINARY_DIR/control-deck"
-RESOURCE_BUNDLE="$BINARY_DIR/ControlDeck_ControlDeck.bundle"
+swift build \
+  -c release \
+  --triple "$ARM64_TRIPLE" \
+  --scratch-path "$ARM64_SCRATCH"
+swift build \
+  -c release \
+  --triple "$X86_64_TRIPLE" \
+  --scratch-path "$X86_64_SCRATCH"
+ARM64_BINARY_DIR="$(
+  swift build \
+    -c release \
+    --triple "$ARM64_TRIPLE" \
+    --scratch-path "$ARM64_SCRATCH" \
+    --show-bin-path
+)"
+X86_64_BINARY_DIR="$(
+  swift build \
+    -c release \
+    --triple "$X86_64_TRIPLE" \
+    --scratch-path "$X86_64_SCRATCH" \
+    --show-bin-path
+)"
+mkdir -p "$(dirname "$UNIVERSAL_OUTPUT")"
+lipo \
+  -create \
+  "$ARM64_BINARY_DIR/control-deck" \
+  "$X86_64_BINARY_DIR/control-deck" \
+  -output "$UNIVERSAL_OUTPUT"
+BINARY="$UNIVERSAL_OUTPUT"
+RESOURCE_BUNDLE="$ARM64_BINARY_DIR/ControlDeck_ControlDeck.bundle"
+verify_universal_executable "$BINARY"
 mkdir -p "$ROOT/dist"
 
 package_app \
