@@ -73,7 +73,7 @@ final class ControllerOverlayController {
         )
         show(
             AnyView(view),
-            size: NSSize(width: 590, height: 470)
+            size: NSSize(width: 590, height: 495)
         )
         scheduleHide(after: 4)
     }
@@ -494,6 +494,8 @@ private struct ContextControllerOverlay: View {
                     }
                 }
                 Text("Hold Create + move the right stick to adjust reasoning")
+                    .font(.caption.weight(.medium))
+                Text("Hold Square + tap Cross to switch apps; release Square to select")
                     .font(.caption.weight(.medium))
             }
         }

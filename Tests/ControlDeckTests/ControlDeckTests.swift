@@ -38,6 +38,12 @@ struct ControlDeckLogicTestRunner {
             "Codex L2 dictates"
         )
         expect(
+            ControllerProfile.defaults
+                .filter { $0.kind != .codex }
+                .allSatisfy { $0.action(for: .l2) == .systemDictation },
+            "L2 provides universal dictation in every non-Codex profile"
+        )
+        expect(
             ControllerProfile.codex.action(for: .l3) == .copy &&
                 ControllerProfile.codex.action(for: .r3) == .paste,
             "Codex stick clicks copy and paste"
@@ -45,6 +51,34 @@ struct ControlDeckLogicTestRunner {
         expect(
             ControllerProfile.general.action(for: .cross) == .mouseLeftClick,
             "General Cross clicks"
+        )
+        var appSwitcherChord = AppSwitcherChordGate()
+        let deferredSquare = appSwitcherChord.handle(.square, pressed: true)
+        expect(
+            deferredSquare == .deferSquare &&
+                appSwitcherChord.handle(.cross, pressed: true) == .begin &&
+                appSwitcherChord.isActive &&
+                appSwitcherChord.handle(.cross, pressed: false) == .consume &&
+                appSwitcherChord.handle(.cross, pressed: true) == .advance &&
+                appSwitcherChord.handle(.square, pressed: false) == .end &&
+                !appSwitcherChord.isActive,
+            "Square then Cross opens, cycles and closes the app switcher"
+        )
+        var squareTapGate = AppSwitcherChordGate()
+        let squareTap = squareTapGate.handle(.square, pressed: true)
+        expect(
+            squareTap == .deferSquare &&
+                squareTapGate.handle(.square, pressed: false) ==
+                    .performSquareTap,
+            "a quick Square tap keeps its normal profile action"
+        )
+        var heldSquareGate = AppSwitcherChordGate()
+        let heldSquare = heldSquareGate.handle(.square, pressed: true)
+        expect(
+            heldSquare == .deferSquare &&
+                heldSquareGate.handle(.square, pressed: false) ==
+                    .performSquareTap,
+            "a held Square keeps its normal action when no chord is entered"
         )
         expect(
             ControllerProfile.codex.gyro.action(for: .shake) ==
@@ -303,14 +337,14 @@ struct ControlDeckLogicTestRunner {
             "Terminal provides dictation, tab creation and clear-screen controls"
         )
         expect(
-            ControllerProfile.meetings.action(for: .l2) == .meetingPushToTalk &&
+            ControllerProfile.meetings.action(for: .l2) == .systemDictation &&
                 ControllerProfile.meetings.action(for: .r3) == .meetingVideo,
-            "Meetings provide push to talk and camera controls"
+            "Meetings provide universal dictation and camera controls"
         )
         expect(
-            ControllerProfile.videoEditing.action(for: .l2) == .timelineReverse &&
+            ControllerProfile.videoEditing.action(for: .l2) == .systemDictation &&
                 ControllerProfile.videoEditing.action(for: .r2) == .timelineForward,
-            "Video editors use a natural J-K-L transport layout"
+            "Video editors keep universal dictation beside transport controls"
         )
         expect(
             ControllerProfile.meetings.matches(

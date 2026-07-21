@@ -11,6 +11,7 @@ final class CodexAutomation: ObservableObject {
     private let codexBundleIdentifier = "com.openai.codex"
     private var dictationShortcutHeld = false
     private var meetingPushToTalkHeld = false
+    private var appSwitcherModifierHeld = false
 
     private enum MeetingCommand {
         case mute, video, chat, participants, share, raiseHand
@@ -341,7 +342,7 @@ final class CodexAutomation: ObservableObject {
                 fallbackPath: "/Applications/Claude.app"
             )
         case .systemDictation:
-            return systemDictation()
+            return toggleSystemDictation()
         case .showControllerOverlay:
             lastResult = "Controller overlay"
             return true
@@ -523,6 +524,48 @@ final class CodexAutomation: ObservableObject {
         return true
     }
 
+    @discardableResult
+    func beginAppSwitcher() -> Bool {
+        if appSwitcherModifierHeld {
+            return advanceAppSwitcher()
+        }
+        guard postKeyState(
+            kVK_Command,
+            flags: .maskCommand,
+            keyDown: true
+        ) else {
+            return false
+        }
+        appSwitcherModifierHeld = true
+        guard postAppSwitcherTab() else {
+            _ = endAppSwitcher()
+            return false
+        }
+        lastResult = "App switcher open"
+        return true
+    }
+
+    @discardableResult
+    func advanceAppSwitcher() -> Bool {
+        guard appSwitcherModifierHeld else {
+            return beginAppSwitcher()
+        }
+        guard postAppSwitcherTab() else { return false }
+        lastResult = "Next application"
+        return true
+    }
+
+    @discardableResult
+    func endAppSwitcher() -> Bool {
+        guard appSwitcherModifierHeld else { return true }
+        let succeeded = postKeyState(kVK_Command, keyDown: false)
+        appSwitcherModifierHeld = false
+        lastResult = succeeded
+            ? "Application selected"
+            : "Could not close app switcher"
+        return succeeded
+    }
+
     func openThread(_ id: String) -> Bool {
         guard let url = URL(string: "codex://threads/\(id)") else {
             lastResult = "Invalid task identifier"
@@ -598,13 +641,18 @@ final class CodexAutomation: ObservableObject {
         return true
     }
 
-    private func systemDictation() -> Bool {
+    @discardableResult
+    func toggleSystemDictation() -> Bool {
         guard key(kVK_Function, focusCodex: false) else { return false }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
             _ = self?.key(kVK_Function, focusCodex: false)
         }
-        lastResult = "System dictation"
+        lastResult = "Universal dictation"
         return true
+    }
+
+    private func postAppSwitcherTab() -> Bool {
+        key(kVK_Tab, flags: .maskCommand, focusCodex: false)
     }
 
     private var frontmostBundleIdentifier: String? {

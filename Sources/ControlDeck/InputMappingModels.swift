@@ -82,6 +82,66 @@ enum ControllerInput: String, Codable, CaseIterable, Identifiable, Hashable, Sen
     }
 }
 
+enum AppSwitcherChordResponse: Equatable, Sendable {
+    case passThrough
+    case deferSquare
+    case performSquareTap
+    case begin
+    case advance
+    case end
+    case consume
+}
+
+struct AppSwitcherChordGate: Sendable {
+    private(set) var isActive = false
+    private var squarePressed = false
+    private var squarePending = false
+
+    mutating func handle(
+        _ input: ControllerInput,
+        pressed: Bool
+    ) -> AppSwitcherChordResponse {
+        if input == .square {
+            if pressed {
+                squarePressed = true
+                squarePending = true
+                return .deferSquare
+            }
+
+            squarePressed = false
+            if isActive {
+                isActive = false
+                squarePending = false
+                return .end
+            }
+            if squarePending {
+                squarePending = false
+                return .performSquareTap
+            }
+            return .passThrough
+        }
+
+        guard input == .cross else { return .passThrough }
+        if isActive {
+            return pressed ? .advance : .consume
+        }
+        guard pressed, squarePressed, squarePending else {
+            return .passThrough
+        }
+        squarePending = false
+        isActive = true
+        return .begin
+    }
+
+    mutating func cancel() -> Bool {
+        let shouldReleaseCommand = isActive
+        squarePressed = false
+        squarePending = false
+        isActive = false
+        return shouldReleaseCommand
+    }
+}
+
 enum ControllerStick: String, Codable, CaseIterable, Identifiable, Sendable {
     case off
     case left
@@ -448,7 +508,7 @@ enum MappedAction: String, Codable, CaseIterable, Identifiable, Sendable {
         case .openChrome: "Open Chrome"
         case .openSpotify: "Open Spotify"
         case .openClaude: "Open Claude"
-        case .systemDictation: "System dictation (Fn Fn)"
+        case .systemDictation: "Universal dictation"
         case .showControllerOverlay: "Show controller overlay"
         case .deleteTextWithConfirmation: "Text · Delete with confirmation"
         }
@@ -935,7 +995,7 @@ struct ControllerProfile: Codable, Equatable, Identifiable, Sendable {
             .triangle: .paste,
             .l1: .back,
             .r1: .forward,
-            .l2: .mouseRightClick,
+            .l2: .systemDictation,
             .r2: .mouseLeftClick,
             .l3: .copy,
             .r3: .paste,
@@ -971,7 +1031,7 @@ struct ControllerProfile: Codable, Equatable, Identifiable, Sendable {
             .triangle: .browserAddress,
             .l1: .back,
             .r1: .forward,
-            .l2: .browserPreviousTab,
+            .l2: .systemDictation,
             .r2: .browserNextTab,
             .l3: .browserFind,
             .r3: .browserReload,
@@ -1004,7 +1064,7 @@ struct ControllerProfile: Codable, Equatable, Identifiable, Sendable {
             .triangle: .mediaNext,
             .l1: .mediaPrevious,
             .r1: .mediaNext,
-            .l2: .volumeDown,
+            .l2: .systemDictation,
             .r2: .volumeUp,
             .l3: .showDesktop,
             .r3: .missionControl,

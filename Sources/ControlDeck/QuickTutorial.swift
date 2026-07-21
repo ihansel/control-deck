@@ -39,7 +39,7 @@ enum QuickTutorialStep: Int, CaseIterable, Identifiable, Sendable {
         case .pointer:
             "The default layout is designed to replace a mouse for everyday work. Clicking and dragging behave like a real mouse, including text selection and moving windows."
         case .voiceAndCapture:
-            "Dictate short or long prompts with L2. R2 selects part of the screen, copies it, and opens the annotation editor so you can highlight what matters."
+            "Dictate into any focused text field with L2. R2 selects part of the screen, copies it, and opens the annotation editor so you can highlight what matters."
         case .profiles:
             "ControlDeck automatically chooses a layout for Codex, Chrome, Spotify, Claude and other popular apps. You can also switch explicitly with the profile wheel."
         case .advanced:
@@ -501,7 +501,7 @@ struct QuickTutorialView: View {
             ]
         case .voiceAndCapture:
             [
-                .init(control: "L2", action: "Dictate", detail: "Tap to toggle a longer recording, or hold for push-to-talk."),
+                .init(control: "L2", action: "Dictate anywhere", detail: "Focus a text field, then tap for hands-free dictation or hold for push-to-talk."),
                 .init(control: "R2", action: "Capture", detail: "Select an area, copy it, then annotate or dismiss immediately.")
             ]
         case .profiles:
@@ -512,6 +512,7 @@ struct QuickTutorialView: View {
         case .ready:
             [
                 .init(control: "Touchpad click", action: "Show context", detail: "See the current profile and important mappings at any time."),
+                .init(control: "Square + Cross", action: "Switch apps", detail: "Hold Square, tap Cross to move, then release Square to select."),
                 .init(control: "Setup", action: "Replay tutorial", detail: "This walkthrough always remains available here.")
             ]
         case .advanced:

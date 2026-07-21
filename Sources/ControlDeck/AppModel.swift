@@ -54,8 +54,13 @@ final class AppModel: ObservableObject {
     private var microphoneDiagnosticGeneration = 0
     private var hybridDictationGeneration = 0
     private var hybridDictationPressed = false
+    private var universalDictationActive = false
+    private var universalDictationMode: VoiceCaptureMode?
+    private var universalDictationGeneration = 0
+    private var universalDictationPressed = false
     private var soundGeneration = 0
     private var heldMouseInputs: [ControllerInput: CGMouseButton] = [:]
+    private var appSwitcherChord = AppSwitcherChordGate()
     private var screenshotEditorCapturedInputs: Set<ControllerInput> = []
     private var tutorialCapturedInputs: Set<ControllerInput> = []
     private var optionsPressed = false
@@ -574,7 +579,11 @@ final class AppModel: ObservableObject {
         execute(action, source: gesture.label)
     }
 
-    private func handleButton(_ input: ControllerInput, pressed: Bool) {
+    private func handleButton(
+        _ input: ControllerInput,
+        pressed: Bool,
+        allowAppSwitcherChord: Bool = true
+    ) {
         if !pressed, screenshotEditorCapturedInputs.remove(input) != nil {
             if input == .cross {
                 pointer.setButton(.left, pressed: false)
@@ -616,6 +625,9 @@ final class AppModel: ObservableObject {
             return
         }
         if input == .options {
+            if pressed, appSwitcherChord.cancel() {
+                _ = automation.endAppSwitcher()
+            }
             handleOptionsButton(pressed: pressed)
             return
         }
@@ -623,11 +635,19 @@ final class AppModel: ObservableObject {
             handleCreateButton(pressed: pressed)
             return
         }
+        if allowAppSwitcherChord,
+           handleAppSwitcherChord(input, pressed: pressed) {
+            return
+        }
         if optionsPressed {
             if pressed { optionsLayerUsed = true }
             return
         }
 
+        if input == .l2, universalDictationActive {
+            handleUniversalDictation(input: input, pressed: pressed)
+            return
+        }
         let action = profiles.activeProfile.action(for: input)
         if !pressed, let button = heldMouseInputs.removeValue(forKey: input) {
             pointer.setButton(button, pressed: false)
@@ -661,6 +681,10 @@ final class AppModel: ObservableObject {
             }
             return
         }
+        if action == .systemDictation, input == .l2 {
+            handleUniversalDictation(input: input, pressed: pressed)
+            return
+        }
         if action == .screenshotSelection {
             if pressed {
                 pointer.keepScreenshotOnClipboard =
@@ -689,6 +713,68 @@ final class AppModel: ObservableObject {
         }
         guard pressed else { return }
         execute(action, source: input.label)
+    }
+
+    private func handleAppSwitcherChord(
+        _ input: ControllerInput,
+        pressed: Bool
+    ) -> Bool {
+        guard !optionsPressed || appSwitcherChord.isActive else {
+            return false
+        }
+        switch appSwitcherChord.handle(input, pressed: pressed) {
+        case .passThrough:
+            return false
+        case .deferSquare:
+            break
+        case .performSquareTap:
+            handleButton(
+                .square,
+                pressed: true,
+                allowAppSwitcherChord: false
+            )
+            handleButton(
+                .square,
+                pressed: false,
+                allowAppSwitcherChord: false
+            )
+        case .begin:
+            if automation.beginAppSwitcher() {
+                lastAction = "App switcher · release Square to select"
+                hud.show(
+                    "App switcher",
+                    detail: "Tap Cross to move · release Square to select",
+                    color: .systemBlue
+                )
+                controller.playHaptic(.selection)
+            } else {
+                _ = appSwitcherChord.cancel()
+                feedbackFailure(automation.lastResult)
+            }
+        case .advance:
+            if automation.advanceAppSwitcher() {
+                lastAction = "App switcher · next application"
+                controller.playHaptic(.selection)
+            } else {
+                if appSwitcherChord.cancel() {
+                    _ = automation.endAppSwitcher()
+                }
+                feedbackFailure(automation.lastResult)
+            }
+        case .end:
+            let succeeded = automation.endAppSwitcher()
+            lastAction = succeeded
+                ? "Application selected"
+                : automation.lastResult
+            if succeeded {
+                controller.playHaptic(.selection)
+            } else {
+                feedbackFailure(automation.lastResult)
+            }
+        case .consume:
+            break
+        }
+        return true
     }
 
     private func mouseButton(for action: MappedAction) -> CGMouseButton? {
@@ -978,6 +1064,91 @@ final class AppModel: ObservableObject {
             setPushToTalk(false)
         default:
             break
+        }
+    }
+
+    private func handleUniversalDictation(
+        input: ControllerInput,
+        pressed: Bool
+    ) {
+        if pressed {
+            universalDictationPressed = true
+            universalDictationGeneration += 1
+            let generation = universalDictationGeneration
+
+            if universalDictationActive,
+               universalDictationMode == .toggle(input) {
+                stopUniversalDictation(handsFree: true)
+                return
+            }
+            guard !universalDictationActive else { return }
+            guard automation.toggleSystemDictation() else {
+                feedbackFailure(automation.lastResult)
+                return
+            }
+            universalDictationActive = true
+            universalDictationMode = .pendingTapOrHold(input)
+            lastAction = "Dictating into the focused text field"
+            hud.show(
+                "Universal dictation",
+                detail: "Speak now · release after holding, or tap again to stop",
+                color: CodexTaskState.listening.color
+            )
+            controller.playHaptic(.selection)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
+                [weak self] in
+                guard let self,
+                      self.universalDictationPressed,
+                      self.universalDictationGeneration == generation,
+                      self.universalDictationMode == .pendingTapOrHold(input)
+                else {
+                    return
+                }
+                self.universalDictationMode = .hold(input)
+                self.lastAction =
+                    "Release \(input.label) to stop universal dictation"
+            }
+            return
+        }
+
+        universalDictationPressed = false
+        universalDictationGeneration += 1
+        switch universalDictationMode {
+        case .pendingTapOrHold(input):
+            universalDictationMode = .toggle(input)
+            lastAction = "Hands-free dictation · tap \(input.label) to stop"
+            hud.show(
+                "Hands-free dictation",
+                detail: "Tap \(input.label) again to stop",
+                color: CodexTaskState.listening.color
+            )
+            controller.playHaptic(.selection)
+        case .hold:
+            stopUniversalDictation(handsFree: false)
+        default:
+            break
+        }
+    }
+
+    private func stopUniversalDictation(handsFree: Bool) {
+        universalDictationActive = false
+        universalDictationMode = nil
+        universalDictationPressed = false
+        universalDictationGeneration += 1
+        let succeeded = automation.toggleSystemDictation()
+        lastAction = succeeded
+            ? "Dictation finished in the focused text field"
+            : automation.lastResult
+        if succeeded {
+            hud.show(
+                handsFree ? "Dictation stopped" : "Dictation complete",
+                detail: "Text inserted into the focused field",
+                color: .systemGreen
+            )
+            controller.playHaptic(.success)
+        } else {
+            feedbackFailure(automation.lastResult)
         }
     }
 
@@ -1310,6 +1481,17 @@ final class AppModel: ObservableObject {
     }
 
     private func controllerTransportChanged(_ transport: ControllerTransport) {
+        if appSwitcherChord.cancel() {
+            _ = automation.endAppSwitcher()
+        }
+        if transport == .unknown, universalDictationActive {
+            universalDictationActive = false
+            universalDictationMode = nil
+            universalDictationPressed = false
+            universalDictationGeneration += 1
+            _ = automation.toggleSystemDictation()
+            lastAction = "Controller disconnected · dictation stopped"
+        }
         if selfTestRunning {
             selfTestGeneration += 1
             selfTestRunning = false
@@ -1413,6 +1595,7 @@ final class AppModel: ObservableObject {
 
     private func shutdown() {
         voiceStopGeneration += 1
+        universalDictationGeneration += 1
         selfTestGeneration += 1
         microphoneDiagnosticGeneration += 1
         selfTestRunning = false
@@ -1431,6 +1614,15 @@ final class AppModel: ObservableObject {
                     voiceCaptureTransport ?? controller.transport,
                 reason: "ControlDeck is closing"
             )
+        }
+        if universalDictationActive {
+            universalDictationActive = false
+            universalDictationMode = nil
+            universalDictationPressed = false
+            _ = automation.toggleSystemDictation()
+        }
+        if appSwitcherChord.cancel() {
+            _ = automation.endAppSwitcher()
         }
         controller.stop()
         bluetoothMicrophone.teardown()

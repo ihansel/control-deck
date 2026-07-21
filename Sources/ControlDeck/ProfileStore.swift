@@ -21,6 +21,7 @@ final class ProfileStore: ObservableObject {
     private let interactionLayersKey = "interactionLayers.v1"
     private let expandedProfileCatalogKey = "expandedProfileCatalog.v1"
     private let stickClickCopyPasteKey = "stickClickCopyPaste.v1"
+    private let universalL2DictationKey = "universalL2Dictation.v1"
     private var activationObserver: NSObjectProtocol?
     private var contextTimer: Timer?
     private var wheelOverrideBundleIdentifier: String?
@@ -107,6 +108,34 @@ final class ProfileStore: ObservableObject {
                 }
             }
             UserDefaults.standard.set(true, forKey: stickClickCopyPasteKey)
+        }
+        if !UserDefaults.standard.bool(forKey: universalL2DictationKey) {
+            for index in profiles.indices {
+                let previousDefault: MappedAction?
+                switch profiles[index].kind {
+                case .general:
+                    previousDefault = .mouseRightClick
+                case .chrome:
+                    previousDefault = .browserPreviousTab
+                case .spotify:
+                    previousDefault = .volumeDown
+                case .meetings:
+                    previousDefault = .meetingPushToTalk
+                case .photos:
+                    previousDefault = .zoomOut
+                case .figma:
+                    previousDefault = .mouseRightClick
+                case .videoEditing:
+                    previousDefault = .timelineReverse
+                default:
+                    previousDefault = nil
+                }
+                if let previousDefault,
+                   profiles[index].action(for: .l2) == previousDefault {
+                    profiles[index].setAction(.systemDictation, for: .l2)
+                }
+            }
+            UserDefaults.standard.set(true, forKey: universalL2DictationKey)
         }
         if let data = try? JSONEncoder().encode(profiles) {
             UserDefaults.standard.set(data, forKey: storageKey)

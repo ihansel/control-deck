@@ -54,8 +54,8 @@ in their own context.
 
 ### A few favourite details
 
-- **Tap or hold L2 to talk.** Tap for hands-free capture, or hold it like a
-  walkie-talkie and release when you are done.
+- **Tap or hold L2 to talk anywhere.** Focus any text field, then tap for
+  hands-free capture or hold it like a walkie-talkie and release when done.
 - **The controller reflects Codex state.** Light and haptics make thinking,
   completion and attention states feel immediate.
 - **Options is a profile wheel.** Hold it, point the left stick toward one of
@@ -75,7 +75,7 @@ The supplied Codex profile is designed around a simple physical vocabulary:
 | --- | --- |
 | Point, click and drag | Left stick + Cross |
 | Scroll vertically or horizontally | Right stick or touchpad |
-| Speak a prompt | Tap or hold L2 |
+| Dictate into the focused text field | Tap or hold L2 |
 | Send / stop / review / plan | D-pad Up / Circle / Square / Triangle |
 | Move between tasks | L1 / R1 |
 | Start a new task | Create |
@@ -84,6 +84,7 @@ The supplied Codex profile is designed around a simple physical vocabulary:
 | Focus Codex | PS button |
 | Show the current profile and mappings | Touchpad click |
 | Toggle hands-free dictation | Microphone button |
+| Switch applications | Hold Square, tap Cross, release Square to select |
 
 Hold **Options** for the profile wheel. Point the **left stick** toward one of
 eight app logos, then release Options to switch. The defaults are Codex, Chrome,
