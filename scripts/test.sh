@@ -13,6 +13,7 @@ swiftc \
   "$ROOT/Sources/ControlDeck/Models.swift" \
   "$ROOT/Sources/ControlDeck/GyroModels.swift" \
   "$ROOT/Sources/ControlDeck/InputMappingModels.swift" \
+  "$ROOT/Sources/ControlDeck/ProfileTransfer.swift" \
   "$ROOT/Sources/ControlDeck/ExpandedProfileCatalog.swift" \
   "$ROOT/Sources/ControlDeck/ShiftLayerModels.swift" \
   "$ROOT/Sources/ControlDeck/QuickTutorial.swift" \

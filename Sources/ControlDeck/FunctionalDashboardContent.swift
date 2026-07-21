@@ -441,17 +441,29 @@ private struct RecentTaskRow: View {
                 .frame(width: 10, height: 10)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 3) {
-                Text(task.shortTitle)
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(1)
-                Text(task.state.label)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(task.shortMessage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                HStack(spacing: 5) {
+                    if task.hasDistinctTitle {
+                        Text(task.shortTitle)
+                            .lineLimit(1)
+                        Text("·")
+                    }
+                    Text(task.state.label)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(task.updatedAt, style: .relative)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            VStack {
+                Text(task.updatedAt, style: .relative)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 2)
             if selected {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(Color.accentColor)
@@ -459,7 +471,8 @@ private struct RecentTaskRow: View {
             }
         }
         .padding(.horizontal, 14)
-        .frame(minHeight: 50)
+        .padding(.vertical, 8)
+        .frame(minHeight: 62)
         .background(
             selected ? Color.accentColor.opacity(0.08) : Color.clear
         )

@@ -245,6 +245,33 @@ final class ProfileStore: ObservableObject {
         persist()
     }
 
+    func importProfile(
+        _ importedProfile: ControllerProfile,
+        into destination: ProfileKind,
+        importName: Bool,
+        importAppAssignments: Bool
+    ) {
+        guard let index = profiles.firstIndex(where: { $0.kind == destination })
+        else { return }
+
+        let existing = profiles[index]
+        var imported = importedProfile
+        imported.kind = destination
+        if !importName {
+            imported.name = existing.name
+        }
+        if !importAppAssignments {
+            imported.bundleIdentifiers = existing.bundleIdentifiers
+            imported.windowTitleKeywords = existing.windowTitleKeywords
+        }
+        profiles[index] = imported
+        editingKind = destination
+        persist()
+        logger.notice(
+            "Imported profile into \(destination.rawValue), app assignments=\(importAppAssignments)"
+        )
+    }
+
     func refreshActiveProfile() {
         guard autoSwitchEnabled else {
             return

@@ -5,6 +5,7 @@
 - `GyroModels.swift`: motion samples, settings and gesture recognition.
 - `GyroMiniGameView.swift`: isolated tilt-ball calibration playground.
 - `ProfileStore.swift`: persistence and foreground-app switching.
+- `ProfileTransfer.swift`: versioned JSON import/export and strict validation.
 - `AppModel.swift`: event routing, hybrid dictation, feedback and screenshots.
 - `ShiftLayerModels.swift`: eight-slot profile wheel and stepped reasoning.
 - `ControllerOverlayController.swift`: non-activating radial/context overlays.

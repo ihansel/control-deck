@@ -1068,6 +1068,8 @@ struct DashboardView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            ProfileSharingView(profiles: profiles)
+
             LazyVGrid(
                 columns: [
                     GridItem(.flexible()),

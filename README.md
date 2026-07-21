@@ -179,6 +179,21 @@ navigation, history, tabs, search, copy/paste, dictation and screenshots are
 easy to reach, while interrupt and split-pane operations remain optional
 remappings.
 
+### Import and share profiles
+
+Select a layout in **Profiles**, then choose **Export** to create a readable,
+versioned `.controldeck-profile.json` file containing its button mappings,
+pointer and scrolling behavior, touch gestures, gyro controls and app matching.
+Anyone with ControlDeck can choose **Import Profile**, review the contents,
+select a destination and confirm before any existing layout is replaced.
+
+Imports keep the receiving Mac's app assignments by default. Importing app and
+window matching is a separate opt-in choice in the review screen. The JSON
+format is limited to 256 KB and has no executable fields. ControlDeck rejects
+unknown schema keys, controller inputs, actions, gesture names, profile
+versions and out-of-range numeric settings; it never runs content from a
+profile file.
+
 ## Supported controllers
 
 **DualSense provides the complete experience:** buttons, sticks, touchpad,
@@ -269,8 +284,9 @@ general shell, filesystem, network, permission or download tool.
 - Gatekeeper is never disabled and quarantine attributes are never removed.
 - Accessibility is used only for controller-driven pointer, keyboard and
   semantic interface actions.
-- Recent Codex task identifiers, titles, timestamps and terminal states are
-  read locally for feedback; prompts and responses are not stored.
+- Recent Codex task identifiers, titles, latest user-message previews,
+  timestamps and terminal states are read locally for feedback. Message
+  previews are held only in memory; prompts and responses are not stored.
 - The wireless microphone bridge taps only its own private muted audio source,
   not other apps or the system mix.
 

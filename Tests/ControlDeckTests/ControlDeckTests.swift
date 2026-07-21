@@ -15,6 +15,20 @@ struct ControlDeckLogicTestRunner {
             }
         }
 
+        func expectThrows(
+            _ operation: () throws -> Void,
+            _ message: String
+        ) {
+            checks += 1
+            do {
+                try operation()
+                FileHandle.standardError.write(Data("FAIL: \(message)\n".utf8))
+                exit(1)
+            } catch {
+                // The rejection is the expected result.
+            }
+        }
+
         expect(
             ControllerProfile.codex.action(for: .cross) == .mouseLeftClick,
             "Codex Cross left-clicks"
@@ -489,6 +503,49 @@ struct ControlDeckLogicTestRunner {
             "missing selected task recovers to the first recent task"
         )
 
+        let messageLog = """
+        {"type":"event_msg","payload":{"type":"user_message","message":"Build the first version"}}
+        {"type":"response_item","payload":{"type":"message","role":"assistant","content":[]}}
+        {"type":"event_msg","payload":{"type":"user_message","message":"  Refine the recent task list\\nwith real chat text.  "}}
+        {"type":"event_msg","payload":{"type":"task_started"}}
+        """
+        expect(
+            CodexTaskMonitor.latestUserMessage(from: messageLog)
+                == "Refine the recent task list with real chat text.",
+            "recent task preview uses the newest real user message"
+        )
+        let previewTask = RecentCodexTask(
+            id: "preview",
+            title: "Generated chat header",
+            latestMessage: "The actual latest task",
+            rolloutPath: "",
+            updatedAt: .distantPast,
+            state: .idle
+        )
+        expect(
+            previewTask.shortMessage == "The actual latest task" &&
+                previewTask.shortTitle == "Generated chat header" &&
+                previewTask.hasDistinctTitle,
+            "recent task keeps the latest message primary and title secondary"
+        )
+        let rolloutFixtureURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("control-deck-rollout-\(UUID().uuidString).jsonl")
+        let largeToolEvent = """
+        {"type":"response_item","payload":{"type":"function_call_output","output":"\(String(repeating: "x", count: 160_000))"}}
+        """
+        let rolloutFixture = """
+        {"type":"event_msg","payload":{"type":"user_message","message":"Newest actual chat after a chunk boundary"}}
+        \(largeToolEvent)
+        {"type":"event_msg","payload":{"type":"task_started"}}
+        """
+        try! Data(rolloutFixture.utf8).write(to: rolloutFixtureURL)
+        defer { try? FileManager.default.removeItem(at: rolloutFixtureURL) }
+        expect(
+            CodexTaskMonitor.latestUserMessage(inFileAtPath: rolloutFixtureURL.path)
+                == "Newest actual chat after a chunk boundary",
+            "recent task reader scans backward across large rollout chunks"
+        )
+
         let legacyPointer = Data(
             """
             {
@@ -672,6 +729,78 @@ struct ControlDeckLogicTestRunner {
             from: encoded
         )
         expect(decoded == .spotify, "profile persistence round-trip")
+
+        let exportDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let sharedData = try! ProfileTransfer.encode(
+            profile: .codex,
+            exportedAt: exportDate
+        )
+        let sharedProfile = try! ProfileTransfer.decode(sharedData)
+        expect(
+            sharedProfile.profile == .codex &&
+                sharedProfile.format == SharedControllerProfile.formatIdentifier &&
+                sharedProfile.version == SharedControllerProfile.currentVersion,
+            "portable profile JSON round-trips through the versioned schema"
+        )
+        expect(
+            ProfileTransfer.safeFilename(for: .codex) ==
+                "codex.controldeck-profile",
+            "portable profile export uses a predictable safe filename"
+        )
+
+        var unsafeRoot = try! JSONSerialization.jsonObject(
+            with: sharedData
+        ) as! [String: Any]
+        unsafeRoot["script"] = "open -a Calculator"
+        let unknownFieldData = try! JSONSerialization.data(withJSONObject: unsafeRoot)
+        expectThrows(
+            { _ = try ProfileTransfer.decode(unknownFieldData) },
+            "portable profile rejects unknown executable-looking fields"
+        )
+
+        var unknownActionRoot = try! JSONSerialization.jsonObject(
+            with: sharedData
+        ) as! [String: Any]
+        var unknownActionProfile = unknownActionRoot["profile"] as! [String: Any]
+        var unknownActionBindings = unknownActionProfile["bindings"] as! [String: Any]
+        unknownActionBindings[ControllerInput.cross.rawValue] = "runShellCommand"
+        unknownActionProfile["bindings"] = unknownActionBindings
+        unknownActionRoot["profile"] = unknownActionProfile
+        let unknownActionData = try! JSONSerialization.data(
+            withJSONObject: unknownActionRoot
+        )
+        expectThrows(
+            { _ = try ProfileTransfer.decode(unknownActionData) },
+            "portable profile rejects actions ControlDeck does not define"
+        )
+
+        var unsafeNumberRoot = try! JSONSerialization.jsonObject(
+            with: sharedData
+        ) as! [String: Any]
+        var unsafeNumberProfile = unsafeNumberRoot["profile"] as! [String: Any]
+        var unsafePointer = unsafeNumberProfile["pointer"] as! [String: Any]
+        unsafePointer["speed"] = 1_000_000
+        unsafeNumberProfile["pointer"] = unsafePointer
+        unsafeNumberRoot["profile"] = unsafeNumberProfile
+        let unsafeNumberData = try! JSONSerialization.data(
+            withJSONObject: unsafeNumberRoot
+        )
+        expectThrows(
+            { _ = try ProfileTransfer.decode(unsafeNumberData) },
+            "portable profile rejects unsafe pointer values"
+        )
+
+        expectThrows(
+            {
+                _ = try ProfileTransfer.decode(
+                    Data(
+                        repeating: 0x20,
+                        count: ProfileTransfer.maximumFileSize + 1
+                    )
+                )
+            },
+            "portable profile rejects files above the bounded read limit"
+        )
 
         let active = """
         {"type":"event_msg","payload":{"type":"task_started"}}

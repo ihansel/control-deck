@@ -93,14 +93,55 @@ enum CodexTaskState: String, Codable, CaseIterable, Sendable {
 struct RecentCodexTask: Identifiable, Equatable, Sendable {
     let id: String
     let title: String
+    let latestMessage: String
     let rolloutPath: String
     let updatedAt: Date
     let state: CodexTaskState
 
+    init(
+        id: String,
+        title: String,
+        latestMessage: String? = nil,
+        rolloutPath: String,
+        updatedAt: Date,
+        state: CodexTaskState
+    ) {
+        self.id = id
+        self.title = title
+        let trimmedMessage = latestMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedMessage, !trimmedMessage.isEmpty {
+            self.latestMessage = trimmedMessage
+        } else {
+            self.latestMessage = title
+        }
+        self.rolloutPath = rolloutPath
+        self.updatedAt = updatedAt
+        self.state = state
+    }
+
     var shortTitle: String {
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.count <= 54 { return trimmed }
-        return String(trimmed.prefix(51)) + "…"
+        shortened(title, limit: 64)
+    }
+
+    var shortMessage: String {
+        shortened(latestMessage, limit: 140)
+    }
+
+    var hasDistinctTitle: Bool {
+        normalized(title) != normalized(latestMessage)
+    }
+
+    private func shortened(_ value: String, limit: Int) -> String {
+        let trimmed = normalized(value)
+        if trimmed.count <= limit { return trimmed }
+        return String(trimmed.prefix(limit - 1)) + "…"
+    }
+
+    private func normalized(_ value: String) -> String {
+        value
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 }
 

@@ -115,7 +115,8 @@ final class CodexTaskMonitor: ObservableObject {
             databasePath,
             """
             SELECT id, replace(replace(title, char(10), ' '), char(13), ' '), \
-            rollout_path, coalesce(updated_at_ms, updated_at * 1000)
+            rollout_path, coalesce(updated_at_ms, updated_at * 1000), \
+            coalesce(nullif(recency_at_ms, 0), updated_at_ms, updated_at * 1000)
             FROM threads
             WHERE archived = 0
             ORDER BY max(
@@ -151,33 +152,46 @@ final class CodexTaskMonitor: ObservableObject {
         var updatedCache = cache
         let tasks = string.split(separator: "\n").compactMap { row -> RecentCodexTask? in
             let fields = row.split(separator: "\u{001f}", omittingEmptySubsequences: false).map(String.init)
-            guard fields.count >= 4 else { return nil }
+            guard fields.count >= 5 else { return nil }
             let rolloutPath = fields[2]
             let attributes = try? FileManager.default.attributesOfItem(atPath: rolloutPath)
             let size = (attributes?[.size] as? NSNumber)?.uint64Value ?? 0
             let modified = attributes?[.modificationDate] as? Date ?? .distantPast
             let cached = cache[rolloutPath]
+            let recencyMilliseconds = Double(fields[4]) ?? 0
 
             let state: CodexTaskState
+            let latestMessage: String
             if cached?.size == size, cached?.modified == modified {
                 state = cached?.state ?? .idle
+                latestMessage = cached?.latestMessage ?? fields[1]
             } else {
-                let inferred = inferState(from: tail(of: rolloutPath))
+                let recentLog = tail(of: rolloutPath)
+                let inferred = inferState(from: recentLog)
                 if inferred == .idle, Date().timeIntervalSince(modified) < 120 {
                     state = .thinking
                 } else {
                     state = inferred
                 }
+                latestMessage = latestUserMessage(from: recentLog)
+                    ?? cached.flatMap {
+                        $0.recencyMilliseconds == recencyMilliseconds ? $0.latestMessage : nil
+                    }
+                    ?? latestUserMessage(inFileAtPath: rolloutPath)
+                    ?? fields[1]
                 updatedCache[rolloutPath] = CachedRollout(
                     size: size,
                     modified: modified,
-                    state: state
+                    state: state,
+                    latestMessage: latestMessage,
+                    recencyMilliseconds: recencyMilliseconds
                 )
             }
             let milliseconds = Double(fields[3]) ?? 0
             return RecentCodexTask(
                 id: fields[0],
                 title: fields[1].isEmpty ? "Untitled task" : fields[1],
+                latestMessage: latestMessage,
                 rolloutPath: rolloutPath,
                 updatedAt: Date(timeIntervalSince1970: milliseconds / 1000),
                 state: state
@@ -204,12 +218,97 @@ final class CodexTaskMonitor: ObservableObject {
             return ""
         }
     }
+
+    nonisolated static func latestUserMessage(from logText: String) -> String? {
+        for line in logText.split(separator: "\n").reversed() {
+            if let message = userMessage(from: Data(line.utf8)) {
+                return message
+            }
+        }
+        return nil
+    }
+
+    nonisolated static func latestUserMessage(
+        inFileAtPath path: String,
+        chunkSize: UInt64 = 128_000,
+        maximumLineBytes: UInt64 = 1_048_576
+    ) -> String? {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? handle.close() }
+
+        do {
+            let length = try handle.seekToEnd()
+            var scanEnd = length
+            var lineEnd = length
+
+            while scanEnd > 0 {
+                let scanStart = scanEnd > chunkSize ? scanEnd - chunkSize : 0
+                try handle.seek(toOffset: scanStart)
+                let chunk = try handle.read(upToCount: Int(scanEnd - scanStart)) ?? Data()
+                let bytes = [UInt8](chunk)
+
+                for index in bytes.indices.reversed() where bytes[index] == 0x0A {
+                    let newlineOffset = scanStart + UInt64(index)
+                    let lineStart = newlineOffset + 1
+                    if lineStart < lineEnd,
+                       lineEnd - lineStart <= maximumLineBytes,
+                       let message = userMessage(
+                           from: try readData(
+                               using: handle,
+                               offset: lineStart,
+                               count: lineEnd - lineStart
+                           )
+                       ) {
+                        return message
+                    }
+                    lineEnd = newlineOffset
+                }
+                scanEnd = scanStart
+            }
+
+            guard lineEnd > 0, lineEnd <= maximumLineBytes else { return nil }
+            return userMessage(
+                from: try readData(using: handle, offset: 0, count: lineEnd)
+            )
+        } catch {
+            return nil
+        }
+    }
+
+    nonisolated private static func readData(
+        using handle: FileHandle,
+        offset: UInt64,
+        count: UInt64
+    ) throws -> Data {
+        try handle.seek(toOffset: offset)
+        return try handle.read(upToCount: Int(count)) ?? Data()
+    }
+
+    nonisolated private static func userMessage(from data: Data) -> String? {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object["type"] as? String == "event_msg",
+            let payload = object["payload"] as? [String: Any],
+            payload["type"] as? String == "user_message",
+            let message = payload["message"] as? String
+        else {
+            return nil
+        }
+
+        let normalized = message
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return normalized.isEmpty ? nil : normalized
+    }
 }
 
 private struct CachedRollout: Sendable {
     let size: UInt64
     let modified: Date
     let state: CodexTaskState
+    let latestMessage: String
+    let recencyMilliseconds: Double
 }
 
 private struct TaskLoadResult: Sendable {
