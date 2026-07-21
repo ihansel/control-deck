@@ -1,0 +1,4 @@
+interface:
+  display_name: "PS5 Controller Customizer"
+  short_description: "Customize controller profiles and mappings"
+  default_prompt: "Use $control-deck-customizer to inspect and safely update my controller profiles."

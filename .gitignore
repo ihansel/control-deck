@@ -1,0 +1,10 @@
+.DS_Store
+.build/
+dist/
+tmp/
+website/
+video/
+Design/LogoConcepts/
+DesignReferences/
+Docs/DevpostVideo.md
+ps5-deepresearch.md

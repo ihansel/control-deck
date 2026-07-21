@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1064 280" role="img" aria-labelledby="title desc">
+  <title id="title">ControlDeck horizontal logo</title>
+  <desc id="desc">Square, triangle, cross and ChatGPT knot arranged in a horizontal line.</desc>
+
+  <rect x="50" y="50" width="180" height="180"
+    fill="none"
+    stroke="#0A0A0C"
+    stroke-width="24"/>
+
+  <path d="M400 36 L502 230 H298 Z"
+    fill="none"
+    stroke="#0A0A0C"
+    stroke-width="24"
+    stroke-linejoin="miter"/>
+
+  <g fill="none" stroke="#0A0A0C" stroke-width="28" stroke-linecap="square">
+    <path d="M580 60 L740 220"/>
+    <path d="M740 60 L580 220"/>
+  </g>
+
+  <image href="../LogoConcepts/assets/chatgpt-logo-vector.svg"
+    x="816" y="36" width="208" height="208"
+    preserveAspectRatio="xMidYMid meet"/>
+</svg>

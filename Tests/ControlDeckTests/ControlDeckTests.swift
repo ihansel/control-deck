@@ -1,0 +1,595 @@
+import Foundation
+
+@main
+struct ControlDeckLogicTestRunner {
+    @MainActor
+    static func main() {
+        var checks = 0
+
+        func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
+            checks += 1
+            guard condition() else {
+                FileHandle.standardError.write(Data("FAIL: \(message)\n".utf8))
+                exit(1)
+            }
+        }
+
+        expect(
+            ControllerProfile.codex.action(for: .cross) == .mouseLeftClick,
+            "Codex Cross left-clicks"
+        )
+        expect(
+            ControllerProfile.codex.action(for: .l2) == .codexDictation,
+            "Codex L2 dictates"
+        )
+        expect(
+            ControllerProfile.general.action(for: .cross) == .mouseLeftClick,
+            "General Cross clicks"
+        )
+        expect(
+            ControllerProfile.chrome.action(for: .triangle) == .browserAddress,
+            "Chrome Triangle focuses address"
+        )
+        expect(
+            ControllerProfile.chrome.action(for: .cross) == .mouseLeftClick,
+            "Chrome Cross performs a native left click"
+        )
+        expect(
+            ControllerProfile.spotify.action(for: .cross) == .mediaPlayPause,
+            "Spotify Cross controls playback"
+        )
+        expect(
+            ControllerProfile.defaults.count == 16,
+            "ControlDeck has sixteen curated app profiles"
+        )
+        expect(
+            ControllerProfile.codex.pointer.source == .left,
+            "Codex pointer uses left stick"
+        )
+        expect(
+            ControllerProfile.codex.action(for: .r2)
+                == .screenshotSelection,
+            "Codex R2 selects a screenshot area"
+        )
+        expect(
+            ControllerProfile.codex.action(for: .dpadUp) == .codexSend,
+            "Codex D-pad Up sends instead of duplicating Plan"
+        )
+        expect(
+            ControllerProfile.codex.action(for: .touchpadClick) ==
+                .showControllerOverlay,
+            "Touchpad click shows the contextual controller overlay"
+        )
+        expect(
+            ControllerProfile.codex.action(for: .triangle) == .codexPlan,
+            "Triangle remains the single default Plan assignment"
+        )
+        expect(
+            ControllerProfile.claude.action(for: .cross) == .mouseLeftClick &&
+                ControllerProfile.claude.action(for: .create) == .claudeNewChat,
+            "Claude mirrors Codex's pointer-first flow with native new chat"
+        )
+        expect(
+            ControllerProfile.terminal.action(for: .l2) == .systemDictation &&
+                ControllerProfile.terminal.action(for: .create) == .terminalNewTab &&
+                ControllerProfile.terminal.action(for: .r3) == .terminalClear,
+            "Terminal provides dictation, tab creation and clear-screen controls"
+        )
+        expect(
+            ControllerProfile.meetings.action(for: .l2) == .meetingPushToTalk &&
+                ControllerProfile.meetings.action(for: .r3) == .meetingVideo,
+            "Meetings provide push to talk and camera controls"
+        )
+        expect(
+            ControllerProfile.videoEditing.action(for: .l2) == .timelineReverse &&
+                ControllerProfile.videoEditing.action(for: .r2) == .timelineForward,
+            "Video editors use a natural J-K-L transport layout"
+        )
+        expect(
+            ControllerProfile.meetings.matches(
+                bundleIdentifier: "com.google.Chrome",
+                windowTitle: "Weekly sync — Google Meet"
+            ),
+            "browser window context selects the Meetings profile"
+        )
+        expect(
+            ControllerProfile.videoEditing.matches(
+                bundleIdentifier: "com.adobe.PremierePro.26",
+                windowTitle: nil
+            ),
+            "wildcard bundle identifiers match versioned creative apps"
+        )
+        var legacyProfileObject = try! JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(ControllerProfile.terminal)
+        ) as! [String: Any]
+        legacyProfileObject.removeValue(forKey: "windowTitleKeywords")
+        let legacyProfile = try! JSONDecoder().decode(
+            ControllerProfile.self,
+            from: JSONSerialization.data(withJSONObject: legacyProfileObject)
+        )
+        expect(
+            legacyProfile.windowTitleKeywords.isEmpty,
+            "saved profiles from before contextual matching remain decodable"
+        )
+        expect(
+            ControllerProfile.chrome.bundleIdentifiers.contains(
+                "com.apple.Safari"
+            ),
+            "browser profile includes Safari"
+        )
+        expect(
+            SoundTheme.playful.tones(for: .complete).count == 3,
+            "playful completion sound is a short three-note cue"
+        )
+        expect(
+            SoundTheme.off.tones(for: .complete).isEmpty,
+            "off sound theme is silent"
+        )
+        expect(
+            ControllerFamily.identify(
+                vendorName: "8BitDo Pro 2",
+                productCategory: "MFi"
+            ) == .eightBitDo,
+            "8BitDo controller identification"
+        )
+        expect(
+            ControllerFamily.identify(
+                vendorName: "Nintendo Switch 2 Pro Controller",
+                productCategory: "Switch"
+            ) == .switchPro2,
+            "Switch 2 controller identification"
+        )
+        expect(
+            CodexDictationIntent.start.keyDown,
+            "dictation starts by holding Codex's shortcut down"
+        )
+        expect(
+            !CodexDictationIntent.stopAndInsert.keyDown,
+            "dictation inserts by releasing Codex's held shortcut"
+        )
+        expect(
+            ControllerProfile.general.pointer.source == .left,
+            "General pointer uses left stick"
+        )
+        expect(
+            ControllerProfile.general.pointer.scrollSource == .right,
+            "General scrolling uses right stick"
+        )
+        expect(
+            TouchpadSettings.trackpadDefault.oneFingerMode == .scroll,
+            "Touchpad defaults to one-finger scrolling"
+        )
+        expect(
+            ControllerProfile.general.action(for: .square) == .copy &&
+                ControllerProfile.general.action(for: .triangle) == .paste,
+            "General face buttons provide copy and paste"
+        )
+        expect(
+            CodexSkillSlot.defaults.count == 4 &&
+                Set(CodexSkillSlot.defaults.map(\.direction)).count == 4,
+            "Options layer has four unique custom skill slots"
+        )
+        expect(
+            ShiftFaceCommand(input: .cross)?.action == .codexApprove &&
+                ShiftFaceCommand(input: .circle)?.action == .codexDecline &&
+                ShiftFaceCommand(input: .square)?.action == .codexSend &&
+                ShiftFaceCommand(input: .triangle)?.action == .codexFastMode,
+            "Options face buttons expose Approve, Decline, Send and Fast mode"
+        )
+
+        var reasoningGate = SteppedStickGate()
+        expect(
+            reasoningGate.update(y: 0.7) == .smarter,
+            "right-stick up selects a smarter reasoning step"
+        )
+        expect(
+            reasoningGate.update(y: 0.9) == nil,
+            "reasoning step does not repeat before returning to neutral"
+        )
+        expect(
+            reasoningGate.update(y: 0.1) == nil &&
+                reasoningGate.update(y: -0.75) == .faster,
+            "neutral re-arms the faster reasoning step"
+        )
+
+        let taskSelectionFixtures = [
+            RecentCodexTask(
+                id: "one",
+                title: "One",
+                rolloutPath: "",
+                updatedAt: .distantPast,
+                state: .idle
+            ),
+            RecentCodexTask(
+                id: "two",
+                title: "Two",
+                rolloutPath: "",
+                updatedAt: .distantPast,
+                state: .thinking
+            )
+        ]
+        expect(
+            TaskSelection.adjacentID(
+                in: taskSelectionFixtures,
+                selectedID: "one",
+                offset: -1
+            ) == "two",
+            "selected task navigation wraps backwards"
+        )
+        expect(
+            TaskSelection.adjacentID(
+                in: taskSelectionFixtures,
+                selectedID: "missing",
+                offset: 1
+            ) == "one",
+            "missing selected task recovers to the first recent task"
+        )
+
+        let legacyPointer = Data(
+            """
+            {
+              "source": "left",
+              "speed": 900,
+              "acceleration": 1.65,
+              "deadZone": 0.16
+            }
+            """.utf8
+        )
+        let migratedPointer = try! JSONDecoder().decode(
+            StickPointerSettings.self,
+            from: legacyPointer
+        )
+        expect(
+            migratedPointer.scrollSource == .right &&
+                migratedPointer.scrollSpeed == 1_050,
+            "legacy pointer settings gain right-stick scrolling"
+        )
+        let legacyTouchpad = Data(
+            """
+            {
+              "oneFingerPointer": true,
+              "twoFingerScroll": true,
+              "pointerSensitivity": 1,
+              "scrollSensitivity": 1,
+              "gestureBindings": {}
+            }
+            """.utf8
+        )
+        let migratedTouchpad = try! JSONDecoder().decode(
+            TouchpadSettings.self,
+            from: legacyTouchpad
+        )
+        expect(
+            migratedTouchpad.oneFingerMode == .pointer,
+            "legacy touchpad pointer setting remains compatible"
+        )
+
+        let horizontalDisplays = [
+            CGRect(x: 0, y: 0, width: 1_920, height: 1_080),
+            CGRect(x: 1_920, y: 0, width: 1_280, height: 1_024)
+        ]
+        expect(
+            DisplayGeometry.constrainedPoint(
+                CGPoint(x: 2_050, y: 500),
+                displays: horizontalDisplays
+            ) == CGPoint(x: 2_050, y: 500),
+            "pointer can enter a second display"
+        )
+        expect(
+            DisplayGeometry.constrainedPoint(
+                CGPoint(x: 3_400, y: 500),
+                displays: horizontalDisplays
+            ).x == 3_199,
+            "pointer remains inside the outer display edge"
+        )
+        expect(
+            DisplayGeometry.constrainedPoint(
+                CGPoint(x: -80, y: 500),
+                displays: [
+                    CGRect(x: -1_280, y: 0, width: 1_280, height: 1_024),
+                    CGRect(x: 0, y: 0, width: 1_920, height: 1_080)
+                ]
+            ) == CGPoint(x: -80, y: 500),
+            "pointer supports displays left of the main display"
+        )
+
+        expect(
+            TouchGesture.swipe(fingers: 1, deltaX: -0.5, deltaY: 0.1)
+                == .oneFingerSwipeLeft,
+            "one-finger horizontal swipe"
+        )
+        expect(
+            TouchGesture.swipe(fingers: 2, deltaX: 0.1, deltaY: 0.5)
+                == .twoFingerSwipeUp,
+            "two-finger vertical swipe"
+        )
+        expect(
+            TouchpadSettings.trackpadDefault.action(for: .oneFingerTap)
+                == .mouseLeftClick,
+            "one-finger tap clicks"
+        )
+        expect(
+            TouchpadSettings.trackpadDefault.action(for: .twoFingerTap)
+                == .mouseRightClick,
+            "two-finger tap right-clicks"
+        )
+
+        var gestures: [TouchGesture] = []
+        var touchScrollDeltas: [CGPoint] = []
+        let gestureEngine = TouchpadGestureEngine()
+        gestureEngine.onGesture = { gestures.append($0) }
+        gestureEngine.onScrollDelta = {
+            touchScrollDeltas.append(CGPoint(x: $0, y: $1))
+        }
+        gestureEngine.update(
+            finger: .primary,
+            x: 0.1,
+            y: 0.1,
+            active: true
+        )
+        gestureEngine.update(
+            finger: .primary,
+            x: 0.5,
+            y: 0.1,
+            active: true
+        )
+        gestureEngine.update(
+            finger: .primary,
+            x: 0,
+            y: 0,
+            active: false
+        )
+        expect(
+            !touchScrollDeltas.isEmpty && gestures.isEmpty,
+            "one-finger movement scrolls without also firing a swipe"
+        )
+
+        gestureEngine.update(
+            finger: .primary,
+            x: 0.25,
+            y: 0.25,
+            active: true
+        )
+        gestureEngine.update(
+            finger: .primary,
+            x: 0,
+            y: 0,
+            active: false
+        )
+        expect(gestures == [.oneFingerTap], "touch engine recognizes a tap")
+
+        gestures.removeAll()
+        gestureEngine.update(
+            finger: .primary,
+            x: -0.3,
+            y: 0.2,
+            active: true
+        )
+        gestureEngine.update(
+            finger: .secondary,
+            x: 0.3,
+            y: 0.2,
+            active: true
+        )
+        gestureEngine.update(
+            finger: .primary,
+            x: 0,
+            y: 0,
+            active: false
+        )
+        gestureEngine.update(
+            finger: .secondary,
+            x: 0,
+            y: 0,
+            active: false
+        )
+        expect(gestures == [.twoFingerTap], "touch engine recognizes two fingers")
+
+        let encoded = try! JSONEncoder().encode(ControllerProfile.spotify)
+        let decoded = try! JSONDecoder().decode(
+            ControllerProfile.self,
+            from: encoded
+        )
+        expect(decoded == .spotify, "profile persistence round-trip")
+
+        let active = """
+        {"type":"event_msg","payload":{"type":"task_started"}}
+        {"type":"response_item","payload":{"type":"function_call"}}
+        """
+        expect(
+            CodexTaskMonitor.inferState(from: active) == .thinking,
+            "active task state"
+        )
+
+        let complete = active + "\n" + """
+        {"type":"event_msg","payload":{"type":"task_complete"}}
+        """
+        expect(
+            CodexTaskMonitor.inferState(from: complete) == .complete,
+            "completed task state"
+        )
+
+        let pendingInput = """
+        {"type":"event_msg","payload":{"type":"task_started"}}
+        {"type":"response_item","payload":{"name":"request_user_input"}}
+        """
+        expect(
+            CodexTaskMonitor.inferState(from: pendingInput) == .needsInput,
+            "pending input task state"
+        )
+        expect(
+            CodexTaskState.aggregate([.idle, .thinking, .complete]) == .thinking,
+            "thinking aggregation priority"
+        )
+        expect(
+            CodexTaskState.aggregate([.thinking, .needsInput]) == .needsInput,
+            "input aggregation priority"
+        )
+        expect(
+            CodexTaskState.aggregate([.idle, .error]) == .error,
+            "error aggregation priority"
+        )
+
+        let micOpen =
+            DualSenseBluetoothAudioProtocol.microphoneStreamReport(
+                active: true,
+                sequence: 0
+            )
+        expect(micOpen.count == 142, "Bluetooth mic report length")
+        expect(
+            Array(micOpen.suffix(4)) == [0x84, 0x67, 0xe8, 0x16],
+            "Bluetooth mic report Sony CRC"
+        )
+        let micClose =
+            DualSenseBluetoothAudioProtocol.microphoneStreamReport(
+                active: false,
+                sequence: 0
+            )
+        expect(micClose[4] == 0xfe, "Bluetooth mic close command")
+        expect(
+            Array(micClose.suffix(4)) == [0x92, 0x90, 0xfa, 0xec],
+            "Bluetooth mic close report Sony CRC"
+        )
+
+        let micState =
+            DualSenseBluetoothAudioProtocol.microphoneStateReport(
+                active: true,
+                muted: false,
+                sequence: 0
+            )
+        expect(micState.count == 78, "Bluetooth mic state length")
+        expect(
+            Array(micState.suffix(4)) == [0xb2, 0xa3, 0x47, 0x3b],
+            "Bluetooth mic state Sony CRC"
+        )
+
+        let speakerOpus = [UInt8](repeating: 0x5a, count: 200)
+        let speakerReport =
+            DualSenseBluetoothAudioProtocol.speakerAudioReport(
+                opusFrame: speakerOpus,
+                reportSequence: 3,
+                packetSequence: 7,
+                microphoneActive: true
+            )!
+        expect(speakerReport.count == 398, "Bluetooth speaker report length")
+        expect(speakerReport[0] == 0x36, "Bluetooth speaker report ID")
+        expect(
+            speakerReport[4] == 0xff,
+            "Bluetooth speaker keeps an active microphone uplink"
+        )
+        expect(
+            speakerReport[142] == 0x93 && speakerReport[143] == 200,
+            "Bluetooth speaker section header"
+        )
+        expect(
+            Array(speakerReport[144..<344]) == speakerOpus,
+            "Bluetooth speaker Opus placement"
+        )
+        expect(
+            speakerReport[13] & 0xe0 == 0xe0 &&
+                speakerReport[20] == 0x39,
+            "Bluetooth speaker report preserves mic and selects speaker"
+        )
+        let speakerChecksum = UInt32(speakerReport[394]) |
+            (UInt32(speakerReport[395]) << 8) |
+            (UInt32(speakerReport[396]) << 16) |
+            (UInt32(speakerReport[397]) << 24)
+        expect(
+            speakerChecksum ==
+                DualSenseBluetoothAudioProtocol.outputCRC(
+                    for: Array(speakerReport[..<394])
+                ),
+            "Bluetooth speaker Sony CRC"
+        )
+        let audioInitialization =
+            DualSenseBluetoothAudioProtocol.audioInitializationReport(
+                microphoneActive: false,
+                speakerActive: true
+            )
+        expect(
+            audioInitialization.count == 142 &&
+                audioInitialization[0] == 0x32 &&
+                audioInitialization[2] == 0x90 &&
+                audioInitialization[3] == 63,
+            "Bluetooth audio initialization framing"
+        )
+        let speakerOnlyReport =
+            DualSenseBluetoothAudioProtocol.speakerAudioReport(
+                opusFrame: speakerOpus,
+                reportSequence: 0,
+                packetSequence: 0,
+                microphoneActive: false
+            )!
+        expect(
+            speakerOnlyReport[4] == 0xfe,
+            "Bluetooth speaker-only packets disable the microphone uplink"
+        )
+
+        let opusFrame = [UInt8(0xd4)] +
+            [UInt8](repeating: 0x55, count: 70)
+        let audioReport = [UInt8(0x31), 0x02, 0x00] +
+            opusFrame + [0x00, 0x00, 0x00, 0x00]
+        expect(
+            DualSenseBluetoothAudioProtocol.microphoneOpusPayload(
+                reportID: 0x31,
+                bytes: audioReport
+            ) == Data(opusFrame),
+            "Bluetooth audio frame extraction"
+        )
+        expect(
+            DualSenseBluetoothAudioProtocol.microphoneOpusPayload(
+                reportID: 0x31,
+                bytes: Array(audioReport.dropFirst())
+            ) == Data(opusFrame),
+            "Bluetooth audio frame extraction without repeated report ID"
+        )
+        var strippedSequenceThree = Array(audioReport.dropFirst())
+        strippedSequenceThree[0] = 0x31
+        expect(
+            !DualSenseBluetoothAudioProtocol.inputBufferIncludesReportID(
+                reportID: 0x31,
+                bytes: strippedSequenceThree
+            ),
+            "stripped sequence header is not mistaken for a report ID"
+        )
+
+        var controlReport = [UInt8](repeating: 0, count: 78)
+        controlReport[0] = 0x31
+        controlReport[1] = 0x01
+        controlReport[6] = 0x80
+        controlReport[9] = 0x20
+        controlReport[10] = 0x04
+        controlReport[11] = 0x04
+        let expectedControl = DualSenseBluetoothControlFrame(
+            leftTrigger: 0x80,
+            buttons0: 0x20,
+            buttons1: 0x04,
+            buttons2: 0x04
+        )
+        expect(
+            DualSenseBluetoothAudioProtocol.bluetoothControlFrame(
+                reportID: 0x31,
+                bytes: controlReport
+            ) == expectedControl,
+            "Bluetooth control offsets with repeated report ID"
+        )
+        var strippedControl = Array(controlReport.dropFirst())
+        strippedControl[0] = 0x31
+        expect(
+            DualSenseBluetoothAudioProtocol.bluetoothControlFrame(
+                reportID: 0x31,
+                bytes: strippedControl
+            ) == expectedControl,
+            "Bluetooth control offsets with stripped sequence-three header"
+        )
+        expect(
+            DualSenseBluetoothAudioProtocol.bluetoothControlFrame(
+                reportID: 0x31,
+                bytes: audioReport
+            ) == nil,
+            "Bluetooth Opus report cannot parse as controller state"
+        )
+
+        print("PASS: \(checks) ControlDeck logic checks")
+    }
+}

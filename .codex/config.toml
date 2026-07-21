@@ -1,0 +1,6 @@
+[mcp_servers.control-deck]
+command = "/usr/bin/python3"
+args = ["Tools/control_deck_mcp.py"]
+cwd = "."
+startup_timeout_sec = 10
+tool_timeout_sec = 20
