@@ -239,8 +239,8 @@ For the everyday development loop, build and launch in one command:
 The local bundle is ad-hoc signed for development on the Mac that built it.
 Public downloads must use Developer ID signing and Apple notarization; the
 release process deliberately fails closed instead of asking users to bypass
-Gatekeeper. The published ZIP is a universal build for both Apple Silicon and
-Intel Macs. See [the distribution guide](Docs/Distribution.md).
+Gatekeeper. The published DMG and fallback ZIP are universal builds for both
+Apple Silicon and Intel Macs. See [the distribution guide](Docs/Distribution.md).
 
 ## First-time setup
 

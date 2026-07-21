@@ -24,12 +24,15 @@ export NOTARYTOOL_PROFILE="control-deck-notary"
 
 The script signs the bundled Opus framework and ControlDeck with hardened
 runtime, submits the archive to Apple, staples and validates the ticket, runs
-Gatekeeper assessment, and only then replaces the release ZIP in `dist`. It
-builds separate arm64 and x86_64 executables and merges them into one universal
-app, so the public download supports both Apple Silicon and Intel Macs.
+Gatekeeper assessment, then creates and separately notarizes a signed DMG. Only
+after both formats pass validation does it replace `dist/ControlDeck.dmg` and
+`dist/ControlDeck.zip`. The DMG contains the app and an Applications shortcut;
+the ZIP remains a lightweight fallback. It builds separate arm64 and x86_64
+executables and merges them into one universal app, so both downloads support
+Apple Silicon and Intel Macs.
 
 For an already-built app bundle, append `--no-build`.
 
 The process intentionally fails closed: missing credentials, signing failures,
-notarization rejection, staple failures, or Gatekeeper rejection prevent a
-release ZIP from being published.
+notarization rejection, staple failures, invalid DMG contents, or Gatekeeper
+rejection prevent either release artifact from being published.
