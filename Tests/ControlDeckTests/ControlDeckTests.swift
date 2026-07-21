@@ -38,6 +38,11 @@ struct ControlDeckLogicTestRunner {
             "Codex L2 dictates"
         )
         expect(
+            ControllerProfile.codex.action(for: .l3) == .copy &&
+                ControllerProfile.codex.action(for: .r3) == .paste,
+            "Codex stick clicks copy and paste"
+        )
+        expect(
             ControllerProfile.general.action(for: .cross) == .mouseLeftClick,
             "General Cross clicks"
         )
@@ -390,6 +395,11 @@ struct ControlDeckLogicTestRunner {
             "General face buttons provide copy and paste"
         )
         expect(
+            ControllerProfile.general.action(for: .l3) == .copy &&
+                ControllerProfile.general.action(for: .r3) == .paste,
+            "General stick clicks copy and paste"
+        )
+        expect(
             ProfileWheelSlot.defaults.count == 8 &&
                 Set(ProfileWheelSlot.defaults.map(\.position)).count == 8 &&
                 Set(ProfileWheelSlot.defaults.map(\.profileKind)).count == 8,
@@ -401,13 +411,13 @@ struct ControlDeckLogicTestRunner {
         let tutorial = QuickTutorialStore(defaults: tutorialDefaults)
         tutorial.offerIfNeeded()
         expect(
-            tutorial.isPresented && tutorial.hasBeenOffered &&
+            tutorial.isPresented && !tutorial.hasBeenOffered &&
                 tutorial.currentStep == .welcome,
-            "the optional tutorial is offered once from its welcome step"
+            "first-run onboarding opens from its welcome step"
         )
         expect(
             tutorial.handleControllerButton(.r1) == .changedStep &&
-                tutorial.currentStep == .pointer &&
+                tutorial.currentStep == .pairController &&
                 tutorial.handleControllerButton(.l1) == .changedStep &&
                 tutorial.currentStep == .welcome,
             "controller shoulder buttons navigate the tutorial"

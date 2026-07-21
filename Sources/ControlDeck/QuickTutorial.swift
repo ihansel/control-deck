@@ -1,9 +1,12 @@
+import AppKit
 import Combine
 import Foundation
 import SwiftUI
 
 enum QuickTutorialStep: Int, CaseIterable, Identifiable, Sendable {
     case welcome
+    case pairController
+    case permissions
     case pointer
     case voiceAndCapture
     case profiles
@@ -15,6 +18,8 @@ enum QuickTutorialStep: Int, CaseIterable, Identifiable, Sendable {
     var title: String {
         switch self {
         case .welcome: "Meet ControlDeck"
+        case .pairController: "Connect your controller"
+        case .permissions: "Let the controller control your Mac"
         case .pointer: "Move naturally around your Mac"
         case .voiceAndCapture: "Speak and capture without leaving your work"
         case .profiles: "Let the controls follow the app"
@@ -27,6 +32,10 @@ enum QuickTutorialStep: Int, CaseIterable, Identifiable, Sendable {
         switch self {
         case .welcome:
             "Your controller has a calm everyday layer for pointing, clicking, scrolling and speaking. Hold controls reveal extra power only when you need it."
+        case .pairController:
+            "Pair wirelessly by holding Create and PS together until the light bar pulses, or plug in a USB cable for an instant wired connection."
+        case .permissions:
+            "Accessibility lets ControlDeck move the pointer, click and send keyboard shortcuts. macOS keeps you in control and you can revoke access at any time."
         case .pointer:
             "The default layout is designed to replace a mouse for everyday work. Clicking and dragging behave like a real mouse, including text selection and moving windows."
         case .voiceAndCapture:
@@ -43,6 +52,8 @@ enum QuickTutorialStep: Int, CaseIterable, Identifiable, Sendable {
     var systemImage: String {
         switch self {
         case .welcome: "gamecontroller.fill"
+        case .pairController: "dot.radiowaves.left.and.right"
+        case .permissions: "accessibility"
         case .pointer: "cursorarrow.motionlines"
         case .voiceAndCapture: "mic.and.signal.meter.fill"
         case .profiles: "circle.hexagongrid.fill"
@@ -126,8 +137,8 @@ final class QuickTutorialStore: ObservableObject {
     @Published private(set) var hasBeenOffered: Bool
 
     private let defaults: UserDefaults
-    private static let completedKey = "quickTutorial.completed.v1"
-    private static let offeredKey = "quickTutorial.offered.v1"
+    private static let completedKey = "quickTutorial.completed.v2"
+    private static let offeredKey = "quickTutorial.offered.v2"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -141,9 +152,7 @@ final class QuickTutorialStore: ObservableObject {
     var isLastStep: Bool { currentStep == .ready }
 
     func offerIfNeeded() {
-        guard !hasCompleted, !hasBeenOffered else { return }
-        hasBeenOffered = true
-        defaults.set(true, forKey: Self.offeredKey)
+        guard !hasCompleted, !hasBeenOffered, !isPresented else { return }
         start()
     }
 
@@ -208,6 +217,12 @@ final class QuickTutorialStore: ObservableObject {
 
 struct QuickTutorialView: View {
     @ObservedObject var store: QuickTutorialStore
+    let controllerConnected: Bool
+    let controllerName: String
+    let accessibilityTrusted: Bool
+    let pairingImage: NSImage?
+    let openBluetoothSettings: () -> Void
+    let requestAccessibility: () -> Void
     let openDestination: (QuickTutorialDestination) -> Void
 
     var body: some View {
@@ -219,7 +234,7 @@ struct QuickTutorialView: View {
             Divider()
             footer
         }
-        .frame(width: 880, height: 650)
+        .frame(width: 1_020, height: 700)
         .background(.regularMaterial)
     }
 
@@ -257,11 +272,106 @@ struct QuickTutorialView: View {
 
     @ViewBuilder
     private var content: some View {
-        if store.currentStep == .advanced {
+        if store.currentStep == .pairController {
+            pairingContent
+        } else if store.currentStep == .permissions {
+            permissionContent
+        } else if store.currentStep == .advanced {
             advancedContent
         } else {
             standardContent
         }
+    }
+
+    private var pairingContent: some View {
+        HStack(spacing: 28) {
+            DualSensePairingIllustration(image: pairingImage)
+                .frame(width: 500, height: 333)
+
+            VStack(alignment: .leading, spacing: 16) {
+                Text(store.currentStep.title)
+                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                Text(store.currentStep.detail)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Label(
+                    "Create is the small button above the D-pad",
+                    systemImage: "info.circle.fill"
+                )
+                .font(.callout.weight(.medium))
+
+                if controllerConnected {
+                    Label(
+                        "Connected: \(controllerName)",
+                        systemImage: "checkmark.circle.fill"
+                    )
+                    .font(.headline)
+                    .foregroundStyle(.green)
+                } else {
+                    Button("Open Bluetooth Settings", action: openBluetoothSettings)
+                        .buttonStyle(.borderedProminent)
+                }
+
+                Divider()
+
+                Label("USB is even simpler", systemImage: "cable.connector")
+                    .font(.headline)
+                Text(
+                    "Connect a data-capable USB-C cable. ControlDeck detects " +
+                        "the controller automatically; no Bluetooth pairing is needed."
+                )
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(30)
+    }
+
+    private var permissionContent: some View {
+        HStack(spacing: 34) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.1))
+                Image(systemName: "accessibility")
+                    .font(.system(size: 94, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .frame(width: 260, height: 260)
+
+            VStack(alignment: .leading, spacing: 16) {
+                Text(store.currentStep.title)
+                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                Text(store.currentStep.detail)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if accessibilityTrusted {
+                    Label("Accessibility is enabled", systemImage: "checkmark.circle.fill")
+                        .font(.headline)
+                        .foregroundStyle(.green)
+                } else {
+                    Button("Open Accessibility Settings", action: requestAccessibility)
+                        .buttonStyle(.borderedProminent)
+                    Text(
+                        "Turn on ControlDeck in the list, then return here. " +
+                            "The status updates automatically."
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                }
+
+                Label(
+                    "ControlDeck does not read passwords or personal files.",
+                    systemImage: "lock.shield.fill"
+                )
+                .font(.callout.weight(.medium))
+            }
+            .frame(maxWidth: 430, alignment: .leading)
+        }
+        .padding(42)
     }
 
     private var standardContent: some View {
@@ -382,6 +492,8 @@ struct QuickTutorialView: View {
                 .init(control: "Everyday", action: "Point and work", detail: "The controls you use constantly stay simple."),
                 .init(control: "Hold controls", action: "Reveal more", detail: "Advanced actions stay out of the way until needed.")
             ]
+        case .pairController, .permissions:
+            []
         case .pointer:
             [
                 .init(control: "Left stick", action: "Move pointer", detail: "Cross clicks; hold Cross and move to drag or highlight."),
@@ -429,5 +541,73 @@ struct QuickTutorialView: View {
             Color(nsColor: .controlBackgroundColor),
             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
         )
+    }
+}
+
+private struct DualSensePairingIllustration: View {
+    let image: NSImage?
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.accentColor.opacity(0.08),
+                                Color(nsColor: .controlBackgroundColor)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .padding(8)
+                } else {
+                    Image(systemName: "gamecontroller.fill")
+                        .font(.system(size: 150, weight: .light))
+                        .foregroundStyle(.secondary)
+                }
+
+                pairingMarker(
+                    "CREATE",
+                    at: CGPoint(x: 0.335, y: 0.205),
+                    in: proxy.size
+                )
+                pairingMarker(
+                    "PS",
+                    at: CGPoint(x: 0.46, y: 0.485),
+                    in: proxy.size
+                )
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "DualSense controller with the Create and PS buttons highlighted"
+        )
+    }
+
+    private func pairingMarker(
+        _ label: String,
+        at point: CGPoint,
+        in size: CGSize
+    ) -> some View {
+        VStack(spacing: 4) {
+            Circle()
+                .stroke(Color.accentColor, lineWidth: 4)
+                .background(Circle().fill(Color.accentColor.opacity(0.15)))
+                .frame(width: label == "PS" ? 50 : 42, height: label == "PS" ? 50 : 42)
+            Text(label)
+                .font(.caption2.weight(.black))
+                .foregroundStyle(Color.accentColor)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(.ultraThickMaterial, in: Capsule())
+        }
+        .position(x: size.width * point.x, y: size.height * point.y)
     }
 }

@@ -14,6 +14,7 @@ enum ScreenshotEditorControllerAction {
 @MainActor
 final class ScreenshotEditorController: NSObject, NSWindowDelegate {
     private let preferences: ScreenCapturePreferences
+    var onDone: ((Bool) -> Void)?
     private var window: NSWindow?
     private(set) var model: ScreenshotEditorModel?
     private var previousApplication: NSRunningApplication?
@@ -37,6 +38,7 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
 
         let root = ScreenshotEditorRootView(
             model: model,
+            copyOnDone: preferences.copyEditedImageOnDone,
             onClose: { [weak self] in self?.dismiss() },
             onDone: { [weak self] in self?.done() },
             onCopy: { _ = model.copyRenderedImage() },
@@ -99,9 +101,11 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
 
     func done() {
         guard let model else { return }
+        var copied = false
         if preferences.copyEditedImageOnDone {
-            _ = model.copyRenderedImage()
+            copied = model.copyRenderedImage()
         }
+        onDone?(copied)
         dismiss()
     }
 
@@ -161,6 +165,7 @@ final class ScreenshotEditorController: NSObject, NSWindowDelegate {
 
 private struct ScreenshotEditorRootView: View {
     @ObservedObject var model: ScreenshotEditorModel
+    let copyOnDone: Bool
     let onClose: () -> Void
     let onDone: () -> Void
     let onCopy: () -> Void
@@ -206,13 +211,31 @@ private struct ScreenshotEditorRootView: View {
             }
             Spacer()
 
+            Label(
+                copyOnDone
+                    ? "Done copies the marked-up image"
+                    : "Done closes without copying",
+                systemImage: copyOnDone ? "doc.on.clipboard.fill" : "xmark.circle"
+            )
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(copyOnDone ? Color.green : Color.secondary)
+
             Button("Copy", systemImage: "doc.on.doc", action: onCopy)
                 .keyboardShortcut("c", modifiers: .command)
             Button("Save", systemImage: "square.and.arrow.down", action: onSave)
                 .keyboardShortcut("s", modifiers: .command)
-            Button("Done", systemImage: "checkmark", action: onDone)
+            Button(
+                copyOnDone ? "Done & Copy" : "Done",
+                systemImage: copyOnDone ? "doc.on.clipboard.fill" : "checkmark",
+                action: onDone
+            )
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.return, modifiers: [.command])
+                .help(
+                    copyOnDone
+                        ? "Close the editor and copy the marked-up image to the clipboard"
+                        : "Close the editor without changing the clipboard"
+                )
         }
         .padding(.horizontal, 18)
         .padding(.top, 13)
@@ -309,9 +332,11 @@ private struct ScreenshotEditorRootView: View {
 
             Spacer()
             Text(
-                model.originalOnClipboard
+                copyOnDone
+                    ? "Done & Copy replaces the clipboard with the current image and all markup. It will be ready to paste immediately."
+                    : model.originalOnClipboard
                     ? "The unedited capture was copied before this window opened. Dismiss at any time to keep it unchanged."
-                    : "Dismiss without changing the clipboard, or choose Copy or Done when the edit is ready."
+                    : "Dismiss without changing the clipboard, or choose Copy when the edit is ready."
             )
                 .font(.caption)
                 .foregroundStyle(.secondary)

@@ -100,9 +100,20 @@ struct DashboardView: View {
                 }
             )
         ) {
-            QuickTutorialView(store: tutorial) { destination in
+            QuickTutorialView(
+                store: tutorial,
+                controllerConnected: controller.isConnected,
+                controllerName: controller.controllerName,
+                accessibilityTrusted: automation.accessibilityTrusted,
+                pairingImage: ProjectRasterImage.load("dualsense-turn-1"),
+                openBluetoothSettings: model.openBluetoothSettings,
+                requestAccessibility: model.requestAccessibility
+            ) { destination in
                 openTutorialDestination(destination)
             }
+        }
+        .onAppear {
+            tutorial.offerIfNeeded()
         }
     }
 
@@ -766,7 +777,7 @@ struct DashboardView: View {
                         isOn: $screenCapture.openEditorAfterCapture
                     )
                     Toggle(
-                        "Copy the edited image when I choose Done",
+                        "Done copies the edited image and markup to the clipboard",
                         isOn: $screenCapture.copyEditedImageOnDone
                     )
                     .disabled(!screenCapture.openEditorAfterCapture)
@@ -876,7 +887,7 @@ struct DashboardView: View {
                     captureShortcut("Square / Triangle", "Undo / redo")
                     captureShortcut("Touchpad click", "Copy edited image")
                     captureShortcut("Create", "Save PNG")
-                    captureShortcut("Options", "Done")
+                    captureShortcut("Options", "Done & copy")
                     captureShortcut("Circle", "Dismiss")
                 }
                 .padding(8)
@@ -1580,16 +1591,6 @@ struct DashboardView: View {
                     model.selfTestRunning ||
                         model.microphoneDiagnosticRunning
                 )
-            }
-        }
-        .onAppear {
-            if setupCompletionCount == 5 {
-                tutorial.offerIfNeeded()
-            }
-        }
-        .onChange(of: setupCompletionCount) { _, completed in
-            if completed == 5 {
-                tutorial.offerIfNeeded()
             }
         }
     }

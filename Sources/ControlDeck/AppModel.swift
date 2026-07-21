@@ -127,6 +127,20 @@ final class AppModel: ObservableObject {
         pointer.onScreenshotCaptureFailed = { [weak self] message in
             self?.feedbackFailure(message)
         }
+        screenshotEditor.onDone = { [weak self] copied in
+            guard let self else { return }
+            self.lastAction = copied
+                ? "Edited screenshot copied to clipboard"
+                : "Screenshot editor closed"
+            self.hud.show(
+                copied ? "Copied to clipboard" : "Screenshot editor closed",
+                detail: copied
+                    ? "The current image and markup are ready to paste"
+                    : "The clipboard was not changed",
+                color: copied ? .systemGreen : .systemGray
+            )
+            self.controller.playHaptic(copied ? .success : .selection)
+        }
         taskMonitor.onTasksChanged = { [weak self] tasks in
             self?.tasksChanged(tasks)
         }
@@ -199,6 +213,12 @@ final class AppModel: ObservableObject {
 
     func requestAccessibility() {
         automation.requestAccessibility()
+        if !automation.accessibilityTrusted,
+           let url = URL(
+               string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
+           ) {
+            NSWorkspace.shared.open(url)
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             self?.automation.refreshAccessibility()
         }
@@ -726,10 +746,7 @@ final class AppModel: ObservableObject {
             lastAction = "Screenshot editor dismissed · original kept"
             controller.playHaptic(.selection)
         case .done:
-            lastAction = screenCapturePreferences.copyEditedImageOnDone
-                ? "Edited screenshot copied"
-                : "Screenshot editor closed"
-            controller.playHaptic(.success)
+            break
         }
     }
 

@@ -26,10 +26,12 @@ The script signs the bundled Opus framework and ControlDeck with hardened
 runtime, submits the archive to Apple, staples and validates the ticket, runs
 Gatekeeper assessment, then creates and separately notarizes a signed DMG. Only
 after both formats pass validation does it replace `dist/ControlDeck.dmg` and
-`dist/ControlDeck.zip`. The DMG contains the app and an Applications shortcut;
-the ZIP remains a lightweight fallback. It builds separate arm64 and x86_64
-executables and merges them into one universal app, so both downloads support
-Apple Silicon and Intel Macs.
+`dist/ControlDeck.zip`. The DMG opens a branded Finder window with the app and
+Applications shortcut positioned around a clear drag arrow; its background and
+Finder layout are validated before publication. The ZIP remains available in
+the repository, while the website uses the DMG as the default download. The
+script builds separate arm64 and x86_64 executables and merges them into one
+universal app, so both artifacts support Apple Silicon and Intel Macs.
 
 For an already-built app bundle, append `--no-build`.
 

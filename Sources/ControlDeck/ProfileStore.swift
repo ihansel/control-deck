@@ -20,6 +20,7 @@ final class ProfileStore: ObservableObject {
     private let mouseRefinementKey = "mouseRefinement.v1"
     private let interactionLayersKey = "interactionLayers.v1"
     private let expandedProfileCatalogKey = "expandedProfileCatalog.v1"
+    private let stickClickCopyPasteKey = "stickClickCopyPaste.v1"
     private var activationObserver: NSObjectProtocol?
     private var contextTimer: Timer?
     private var wheelOverrideBundleIdentifier: String?
@@ -83,6 +84,29 @@ final class ProfileStore: ObservableObject {
                 profiles[index] = .claude
             }
             UserDefaults.standard.set(true, forKey: expandedProfileCatalogKey)
+        }
+        if !UserDefaults.standard.bool(forKey: stickClickCopyPasteKey) {
+            for index in profiles.indices {
+                switch profiles[index].kind {
+                case .codex:
+                    if profiles[index].action(for: .l3) == .codexQuickChat {
+                        profiles[index].setAction(.copy, for: .l3)
+                    }
+                    if profiles[index].action(for: .r3) == .codexTerminal {
+                        profiles[index].setAction(.paste, for: .r3)
+                    }
+                case .general:
+                    if profiles[index].action(for: .l3) == .showDesktop {
+                        profiles[index].setAction(.copy, for: .l3)
+                    }
+                    if profiles[index].action(for: .r3) == .missionControl {
+                        profiles[index].setAction(.paste, for: .r3)
+                    }
+                default:
+                    break
+                }
+            }
+            UserDefaults.standard.set(true, forKey: stickClickCopyPasteKey)
         }
         if let data = try? JSONEncoder().encode(profiles) {
             UserDefaults.standard.set(data, forKey: storageKey)

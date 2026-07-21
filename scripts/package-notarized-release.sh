@@ -7,6 +7,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK_DIR="$(mktemp -d -t control-deck-release)"
 
 cleanup() {
+  if mount | grep -Fq "on /Volumes/ControlDeck Installer "; then
+    hdiutil detach "/Volumes/ControlDeck Installer" >/dev/null 2>&1 || true
+  fi
+  if mount | grep -Fq "on $WORK_DIR/dmg-mount "; then
+    hdiutil detach "$WORK_DIR/dmg-mount" >/dev/null 2>&1 || true
+  fi
   [[ ! -d "$WORK_DIR" ]] || rm -r "$WORK_DIR" 2>/dev/null || true
 }
 
@@ -22,7 +28,10 @@ package_and_notarize() {
   local framework="$app/Contents/Frameworks/libopus.0.dylib"
   local app_submission="$WORK_DIR/$app_name-app.zip"
   local dmg="$WORK_DIR/$app_name.dmg"
-  local dmg_root="$WORK_DIR/dmg-root"
+  local writable_dmg="$WORK_DIR/$app_name-writable.dmg"
+  local dmg_background="$WORK_DIR/dmg-background.png"
+  local volume_name="$app_name Installer"
+  local layout_mount_point="/Volumes/$volume_name"
   local mount_point="$WORK_DIR/dmg-mount"
   local zip="$WORK_DIR/$app_name.zip"
 
@@ -51,15 +60,68 @@ package_and_notarize() {
 
   ditto -c -k --sequesterRsrc --keepParent "$app" "$zip"
 
-  mkdir -p "$dmg_root"
-  ditto "$app" "$dmg_root/$app_name.app"
-  ln -s /Applications "$dmg_root/Applications"
+  sips \
+    -s format png \
+    "$ROOT/Resources/DMGBackground.svg" \
+    --out "$dmg_background" >/dev/null
+
   hdiutil create \
-    -volname "$app_name" \
-    -srcfolder "$dmg_root" \
-    -format UDZO \
+    -size 128m \
+    -fs HFS+ \
+    -volname "$volume_name" \
     -ov \
-    "$dmg"
+    "$writable_dmg" >/dev/null
+
+  [[ ! -e "$layout_mount_point" ]]
+  hdiutil attach \
+    -readwrite \
+    -noverify \
+    -noautoopen \
+    "$writable_dmg" >/dev/null
+  [[ -d "$layout_mount_point" ]]
+  ditto "$app" "$layout_mount_point/$app_name.app"
+  ln -s /Applications "$layout_mount_point/Applications"
+  mkdir "$layout_mount_point/.background"
+  cp "$dmg_background" "$layout_mount_point/.background/dmg-background.png"
+  chflags hidden "$layout_mount_point/.background"
+  mkdir -p "$layout_mount_point/.fseventsd"
+  touch "$layout_mount_point/.fseventsd/no_log"
+  chflags hidden "$layout_mount_point/.fseventsd"
+
+  osascript <<APPLESCRIPT
+tell application "Finder"
+  tell disk "$volume_name"
+    open
+    set current view of container window to icon view
+    set toolbar visible of container window to false
+    set statusbar visible of container window to false
+    set pathbar visible of container window to false
+    set bounds of container window to {120, 120, 840, 580}
+    set theViewOptions to icon view options of container window
+    set arrangement of theViewOptions to not arranged
+    set icon size of theViewOptions to 112
+    set text size of theViewOptions to 13
+    set background picture of theViewOptions to file ".background:dmg-background.png"
+    set position of item "$app_name.app" of container window to {190, 250}
+    set position of item "Applications" of container window to {530, 250}
+    try
+      set position of item ".background" of container window to {900, 650}
+      set position of item ".fseventsd" of container window to {900, 760}
+    end try
+    update without registering applications
+    delay 1
+    close
+  end tell
+end tell
+APPLESCRIPT
+  sync
+  hdiutil detach "$layout_mount_point" >/dev/null
+  hdiutil convert \
+    "$writable_dmg" \
+    -format UDZO \
+    -imagekey zlib-level=9 \
+    -ov \
+    -o "$dmg" >/dev/null
   codesign \
     --force \
     --timestamp \
@@ -94,6 +156,9 @@ package_and_notarize() {
     "$mount_point/$app_name.app" || mount_validation=$?
   [[ "$(readlink "$mount_point/Applications")" == "/Applications" ]] || \
     mount_validation=1
+  [[ -f "$mount_point/.background/dmg-background.png" ]] || \
+    mount_validation=1
+  [[ -f "$mount_point/.DS_Store" ]] || mount_validation=1
   hdiutil detach "$mount_point" >/dev/null || mount_validation=$?
   (( mount_validation == 0 ))
 

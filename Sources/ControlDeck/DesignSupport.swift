@@ -16,10 +16,17 @@ enum PS5Palette {
 struct ProjectRasterImage: View {
     let name: String
 
+    static func load(_ name: String) -> NSImage? {
+        guard let url = Bundle.module.url(
+            forResource: name,
+            withExtension: "png"
+        ) else { return nil }
+        return NSImage(contentsOf: url)
+    }
+
     @ViewBuilder
     var body: some View {
-        if let url = Bundle.module.url(forResource: name, withExtension: "png"),
-           let image = NSImage(contentsOf: url) {
+        if let image = Self.load(name) {
             Image(nsImage: image)
                 .resizable()
         } else {

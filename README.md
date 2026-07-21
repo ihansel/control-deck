@@ -80,7 +80,7 @@ The supplied Codex profile is designed around a simple physical vocabulary:
 | Move between tasks | L1 / R1 |
 | Start a new task | Create |
 | Capture a selected area | Hold R2 and move the left stick |
-| Open quick chat / terminal | L3 / R3 |
+| Copy / paste | L3 / R3 |
 | Focus Codex | PS button |
 | Show the current profile and mappings | Touchpad click |
 | Toggle hands-free dictation | Microphone button |
@@ -103,8 +103,10 @@ undo, redo, PNG save and edited-image copy.
 
 The controller remains fully usable inside the editor: left stick moves the
 pointer, Cross draws, L1/R1 changes tools, Square/Triangle undo and redo,
-Touchpad click copies, Create saves, Options finishes, and Circle dismisses the
-editor while leaving the original capture on the clipboard. Open **Screen
+Touchpad click copies, Create saves, **Options chooses Done & Copy**, and Circle
+dismisses the editor while leaving the original capture on the clipboard. The
+editor labels the Done action explicitly and confirms that the current image
+and all markup will replace the clipboard, ready to paste. Open **Screen
 Capture** in ControlDeck to change clipboard behavior, editor presentation,
 default tool, colour and line size.
 
@@ -239,24 +241,27 @@ For the everyday development loop, build and launch in one command:
 The local bundle is ad-hoc signed for development on the Mac that built it.
 Public downloads must use Developer ID signing and Apple notarization; the
 release process deliberately fails closed instead of asking users to bypass
-Gatekeeper. The published DMG and fallback ZIP are universal builds for both
-Apple Silicon and Intel Macs. See [the distribution guide](Docs/Distribution.md).
+Gatekeeper. The published DMG and repository ZIP are universal builds for both
+Apple Silicon and Intel Macs. The DMG opens as a branded drag-to-Applications
+installer. See [the distribution guide](Docs/Distribution.md).
 
 ## First-time setup
 
-1. Connect a controller by USB or Bluetooth.
-2. Launch ControlDeck and open **Setup**.
-3. Grant Accessibility permission for pointer and keyboard automation.
-4. Run the safe hardware self-test: one gentle haptic and one short tone.
-5. Take the optional three-minute tutorial when Setup offers it, or skip it and
-   replay it later from the same page.
-6. Open **Button Mapping**, **Touchpad**, **Gyro** or **Pointer** when you are
-   ready to make the controller feel like yours.
+1. Drag ControlDeck into Applications and open it.
+2. Follow the automatic, skippable first-run guide. It shows exactly where the
+   DualSense Create and PS buttons are, offers one-click access to Bluetooth
+   Settings, and explains the USB option.
+3. Grant Accessibility permission when the guide opens the correct macOS pane.
+4. Continue through the everyday controls, profiles and optional advanced
+   features, or skip and replay the guide later from **Setup**.
+5. Run the safe hardware self-test when you are ready: one gentle haptic and
+   one short tone.
 
-The tutorial introduces pointer and scrolling, dictation, screen capture and
-the eight-profile wheel. Its advanced page links directly to Button Mapping,
-Touchpad, Pointer, Screen Capture, Shift Layer, Profiles, Gyro and Customize
-with Codex so new users can start simply without losing access to deeper tools.
+The guide introduces pairing, permissions, pointer and scrolling, dictation,
+screen capture and the eight-profile wheel. Its advanced page links directly
+to Button Mapping, Touchpad, Pointer, Screen Capture, Shift Layer, Profiles,
+Gyro and Customize with Codex so new users can start simply without losing
+access to deeper tools.
 
 To pair a DualSense wirelessly, disconnect USB and hold **Create + PS** until
 the light bar flashes rapidly. Select **DualSense Wireless Controller** in
