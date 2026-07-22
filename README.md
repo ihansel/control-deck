@@ -31,6 +31,17 @@
   <img src="Sources/ControlDeck/Resources/dualsense-hero.png" alt="A DualSense controller ready to use with ControlDeck" width="900">
 </p>
 
+## OpenAI Build Week 2026
+
+> [!IMPORTANT]
+> **Competition checkpoint:** [`4ac19949c2fc6257720a4b4286e7f46bfd1bae8e`](https://github.com/ihansel/control-deck/tree/4ac19949c2fc6257720a4b4286e7f46bfd1bae8e)
+>
+> I have been having too much fun to stop, so ControlDeck has continued to
+> evolve since the Build Week submission. For competition evaluation, please
+> use only the app and repository as they existed at the checkpoint above.
+> The download on [control-deck.com](https://www.control-deck.com) intentionally
+> tracks the latest release for current users, live demonstrations and talks.
+
 ControlDeck is a native macOS app that makes a compatible game controller feel
 like a purpose-built interface for Codex. Buttons become agent actions, sticks
 become pointer and navigation controls, the touchpad scrolls, and the controller
