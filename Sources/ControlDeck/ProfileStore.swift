@@ -22,6 +22,7 @@ final class ProfileStore: ObservableObject {
     private let expandedProfileCatalogKey = "expandedProfileCatalog.v1"
     private let stickClickCopyPasteKey = "stickClickCopyPaste.v1"
     private let universalL2DictationKey = "universalL2Dictation.v1"
+    private let universalR2CaptureKey = "universalR2Capture.v1"
     private var activationObserver: NSObjectProtocol?
     private var contextTimer: Timer?
     private var wheelOverrideBundleIdentifier: String?
@@ -136,6 +137,21 @@ final class ProfileStore: ObservableObject {
                 }
             }
             UserDefaults.standard.set(true, forKey: universalL2DictationKey)
+        }
+        if !UserDefaults.standard.bool(forKey: universalR2CaptureKey) {
+            let replacedDefaults: [MappedAction] = [
+                .mouseLeftClick,
+                .browserNextTab,
+                .volumeUp,
+                .zoomIn,
+                .timelineForward,
+                .timelineRecord
+            ]
+            for index in profiles.indices
+            where replacedDefaults.contains(profiles[index].action(for: .r2)) {
+                profiles[index].setAction(.screenshotSelection, for: .r2)
+            }
+            UserDefaults.standard.set(true, forKey: universalR2CaptureKey)
         }
         if let data = try? JSONEncoder().encode(profiles) {
             UserDefaults.standard.set(data, forKey: storageKey)

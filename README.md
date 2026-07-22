@@ -71,6 +71,9 @@ in their own context.
   completion and attention states feel immediate.
 - **Options is a profile wheel.** Hold it, point the left stick toward one of
   eight app profiles, then release to switch without crowding everyday controls.
+- **Touchpad click has two useful depths.** Tap it for the current profile and
+  mapping overlay; hold it for the native macOS app switcher, move with the
+  right stick or D-pad, then release to select. Circle always cancels.
 - **The pointer can replace a mouse.** Move across multiple displays, scroll in
   two axes, drag windows, highlight text and right-click.
 - **Profiles follow your work.** Move from Codex to Terminal, a meeting or a
@@ -92,10 +95,9 @@ The supplied Codex profile is designed around a simple physical vocabulary:
 | Start a new task | Create |
 | Capture a selected area | Hold R2 and move the left stick |
 | Copy / paste | L3 / R3 |
-| Focus Codex | PS button |
 | Show the current profile and mappings | Touchpad click |
 | Toggle hands-free dictation | Microphone button |
-| Switch applications | Hold PS; L1/R1 or D-pad to move; release PS to select; Circle cancels |
+| Switch applications | Hold the touchpad click; right stick or D-pad to move; release to select; Circle cancels |
 
 Hold **Options** for the profile wheel. Point the **left stick** toward one of
 eight app logos, then release Options to switch. The defaults are Codex, Chrome,
@@ -103,7 +105,10 @@ Claude, Spotify, General macOS, Finder, Terminal and Slack; every slot can be
 swapped in ControlDeck. Hold **Create + right stick** to step reasoning smarter
 or faster.
 
-Everything can be changed in the mapping editor and is saved immediately.
+Everything can be changed in the mapping editor and is saved immediately. The
+PS button remains available for profile mappings when macOS delivers it, but
+some macOS versions reserve it for Game Center; no core ControlDeck workflow
+depends on it.
 
 ### Screen capture editor
 

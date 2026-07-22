@@ -84,8 +84,8 @@ enum ControllerInput: String, Codable, CaseIterable, Identifiable, Hashable, Sen
 
 enum AppSwitcherHoldResponse: Equatable, Sendable {
     case passThrough
-    case deferPS(generation: Int)
-    case performPSTap
+    case deferTouchpadTap(generation: Int)
+    case performTouchpadTap
     case forward
     case backward
     case select
@@ -95,50 +95,50 @@ enum AppSwitcherHoldResponse: Equatable, Sendable {
 
 struct AppSwitcherHoldGate: Sendable {
     private(set) var isActive = false
-    private var psPressed = false
-    private var psTapPending = false
+    private var touchpadPressed = false
+    private var touchpadTapPending = false
     private var generation = 0
 
     mutating func handle(
         _ input: ControllerInput,
         pressed: Bool
     ) -> AppSwitcherHoldResponse {
-        if input == .ps {
+        if input == .touchpadClick {
             if pressed {
-                guard !psPressed else { return .consume }
-                psPressed = true
-                psTapPending = true
+                guard !touchpadPressed else { return .consume }
+                touchpadPressed = true
+                touchpadTapPending = true
                 generation += 1
-                return .deferPS(generation: generation)
+                return .deferTouchpadTap(generation: generation)
             }
 
-            psPressed = false
+            touchpadPressed = false
             generation += 1
             if isActive {
                 isActive = false
-                psTapPending = false
+                touchpadTapPending = false
                 return .select
             }
-            if psTapPending {
-                psTapPending = false
-                return .performPSTap
+            if touchpadTapPending {
+                touchpadTapPending = false
+                return .performTouchpadTap
             }
             return .consume
         }
 
         guard isActive else {
-            return psPressed ? .consume : .passThrough
+            return touchpadPressed ? .consume : .passThrough
         }
 
         guard pressed else { return .consume }
         switch input {
-        case .r1, .dpadRight:
+        case .dpadRight:
             return .forward
-        case .l1, .dpadLeft:
+        case .dpadLeft:
             return .backward
         case .circle:
             isActive = false
-            psTapPending = false
+            touchpadTapPending = false
             generation += 1
             return .cancel
         default:
@@ -147,14 +147,14 @@ struct AppSwitcherHoldGate: Sendable {
     }
 
     mutating func activate(generation expected: Int) -> Bool {
-        guard psPressed,
-              psTapPending,
+        guard touchpadPressed,
+              touchpadTapPending,
               generation == expected,
               !isActive
         else {
             return false
         }
-        psTapPending = false
+        touchpadTapPending = false
         isActive = true
         return true
     }
@@ -162,10 +162,33 @@ struct AppSwitcherHoldGate: Sendable {
     mutating func cancel() -> Bool {
         let shouldReleaseCommand = isActive
         generation += 1
-        psPressed = false
-        psTapPending = false
+        touchpadPressed = false
+        touchpadTapPending = false
         isActive = false
         return shouldReleaseCommand
+    }
+}
+
+enum AppSwitcherStickDirection: Equatable, Sendable {
+    case forward
+    case backward
+}
+
+struct AppSwitcherStickGate: Sendable {
+    private var isCentered = true
+
+    mutating func update(x: Float) -> AppSwitcherStickDirection? {
+        if abs(x) <= 0.35 {
+            isCentered = true
+            return nil
+        }
+        guard isCentered, abs(x) >= 0.68 else { return nil }
+        isCentered = false
+        return x > 0 ? .forward : .backward
+    }
+
+    mutating func reset() {
+        isCentered = true
     }
 }
 
@@ -1023,7 +1046,7 @@ struct ControllerProfile: Codable, Equatable, Identifiable, Sendable {
             .l1: .back,
             .r1: .forward,
             .l2: .systemDictation,
-            .r2: .mouseLeftClick,
+            .r2: .screenshotSelection,
             .l3: .copy,
             .r3: .paste,
             .create: .systemDictation,
@@ -1059,7 +1082,7 @@ struct ControllerProfile: Codable, Equatable, Identifiable, Sendable {
             .l1: .back,
             .r1: .forward,
             .l2: .systemDictation,
-            .r2: .browserNextTab,
+            .r2: .screenshotSelection,
             .l3: .browserFind,
             .r3: .browserReload,
             .create: .browserReopenTab,
@@ -1092,7 +1115,7 @@ struct ControllerProfile: Codable, Equatable, Identifiable, Sendable {
             .l1: .mediaPrevious,
             .r1: .mediaNext,
             .l2: .systemDictation,
-            .r2: .volumeUp,
+            .r2: .screenshotSelection,
             .l3: .showDesktop,
             .r3: .missionControl,
             .create: .systemDictation,

@@ -52,37 +52,60 @@ struct ControlDeckLogicTestRunner {
             ControllerProfile.general.action(for: .cross) == .mouseLeftClick,
             "General Cross clicks"
         )
-        var appSwitcherHold = AppSwitcherHoldGate()
-        let deferredPS = appSwitcherHold.handle(.ps, pressed: true)
         expect(
-            deferredPS == .deferPS(generation: 1) &&
+            ControllerProfile.defaults.allSatisfy {
+                $0.action(for: .r2) == .screenshotSelection
+            },
+            "R2 captures a selected area in every default profile"
+        )
+        var appSwitcherHold = AppSwitcherHoldGate()
+        let deferredTouchpad = appSwitcherHold.handle(
+            .touchpadClick,
+            pressed: true
+        )
+        expect(
+            deferredTouchpad == .deferTouchpadTap(generation: 1) &&
                 appSwitcherHold.activate(generation: 1) &&
                 appSwitcherHold.isActive &&
-                appSwitcherHold.handle(.r1, pressed: true) == .forward &&
                 appSwitcherHold.handle(.dpadRight, pressed: true) == .forward &&
-                appSwitcherHold.handle(.l1, pressed: true) == .backward &&
                 appSwitcherHold.handle(.dpadLeft, pressed: true) == .backward &&
-                appSwitcherHold.handle(.ps, pressed: false) == .select &&
+                appSwitcherHold.handle(.touchpadClick, pressed: false) == .select &&
                 !appSwitcherHold.isActive,
-            "holding PS opens, navigates and selects from the app switcher"
+            "holding the touchpad opens, navigates and selects the app switcher"
         )
-        var psTapGate = AppSwitcherHoldGate()
-        let psTap = psTapGate.handle(.ps, pressed: true)
+        var touchpadTapGate = AppSwitcherHoldGate()
+        let touchpadTap = touchpadTapGate.handle(
+            .touchpadClick,
+            pressed: true
+        )
         expect(
-            psTap == .deferPS(generation: 1) &&
-                psTapGate.handle(.ps, pressed: false) == .performPSTap &&
-                !psTapGate.activate(generation: 1),
-            "a quick PS tap keeps its normal focus action"
+            touchpadTap == .deferTouchpadTap(generation: 1) &&
+                touchpadTapGate.handle(.touchpadClick, pressed: false) ==
+                    .performTouchpadTap &&
+                !touchpadTapGate.activate(generation: 1),
+            "a quick touchpad click keeps its normal overlay action"
         )
         var cancelSwitcherGate = AppSwitcherHoldGate()
-        let cancelPS = cancelSwitcherGate.handle(.ps, pressed: true)
+        let cancelTouchpad = cancelSwitcherGate.handle(
+            .touchpadClick,
+            pressed: true
+        )
         expect(
-            cancelPS == .deferPS(generation: 1) &&
+            cancelTouchpad == .deferTouchpadTap(generation: 1) &&
                 cancelSwitcherGate.activate(generation: 1) &&
                 cancelSwitcherGate.handle(.circle, pressed: true) == .cancel &&
-                cancelSwitcherGate.handle(.ps, pressed: false) == .consume &&
+                cancelSwitcherGate.handle(.touchpadClick, pressed: false) ==
+                    .consume &&
                 !cancelSwitcherGate.isActive,
-            "Circle cancels the held-PS app switcher without focusing Codex"
+            "Circle cancels the held-touchpad app switcher without showing the overlay"
+        )
+        var appSwitcherStick = AppSwitcherStickGate()
+        expect(
+            appSwitcherStick.update(x: 0.75) == .forward &&
+                appSwitcherStick.update(x: 0.9) == nil &&
+                appSwitcherStick.update(x: 0.1) == nil &&
+                appSwitcherStick.update(x: -0.8) == .backward,
+            "right-stick app switching steps once per deliberate tilt"
         )
         expect(
             ControllerProfile.codex.gyro.action(for: .shake) ==
@@ -347,8 +370,9 @@ struct ControlDeckLogicTestRunner {
         )
         expect(
             ControllerProfile.videoEditing.action(for: .l2) == .systemDictation &&
-                ControllerProfile.videoEditing.action(for: .r2) == .timelineForward,
-            "Video editors keep universal dictation beside transport controls"
+                ControllerProfile.videoEditing.action(for: .r2) ==
+                    .screenshotSelection,
+            "Video editors keep universal dictation and reliable R2 capture"
         )
         expect(
             ControllerProfile.meetings.matches(

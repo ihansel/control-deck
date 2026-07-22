@@ -61,6 +61,7 @@ final class AppModel: ObservableObject {
     private var soundGeneration = 0
     private var heldMouseInputs: [ControllerInput: CGMouseButton] = [:]
     private var appSwitcherHold = AppSwitcherHoldGate()
+    private var appSwitcherStick = AppSwitcherStickGate()
     private var appSwitcherSafetyGeneration = 0
     private var screenshotEditorCapturedInputs: Set<ControllerInput> = []
     private var tutorialCapturedInputs: Set<ControllerInput> = []
@@ -476,6 +477,13 @@ final class AppModel: ObservableObject {
         case let .button(input, pressed):
             handleButton(input, pressed: pressed)
         case let .stick(stick, x, y):
+            if appSwitcherHold.isActive {
+                if stick == .right,
+                   let direction = appSwitcherStick.update(x: x) {
+                    stepAppSwitcher(direction)
+                }
+                return
+            }
             if screenshotEditor.isPresented {
                 guard stick == .left else { return }
                 pointer.updateStick(
@@ -515,6 +523,7 @@ final class AppModel: ObservableObject {
                 pointerSource: pointerSettings.source
             )
         case let .touch(finger, x, y, active):
+            guard !appSwitcherHold.isActive else { return }
             touchpad.settings = profiles.activeProfile.touchpad
             touchpad.update(finger: finger, x: x, y: y, active: active)
         case let .action(action):
@@ -720,7 +729,7 @@ final class AppModel: ObservableObject {
         switch appSwitcherHold.handle(input, pressed: pressed) {
         case .passThrough:
             return false
-        case let .deferPS(generation):
+        case let .deferTouchpadTap(generation):
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
                 [weak self] in
                 guard let self,
@@ -730,33 +739,24 @@ final class AppModel: ObservableObject {
                 }
                 self.beginAppSwitcherHold()
             }
-        case .performPSTap:
+        case .performTouchpadTap:
             handleButton(
-                .ps,
+                .touchpadClick,
                 pressed: true,
                 allowAppSwitcherHold: false
             )
             handleButton(
-                .ps,
+                .touchpadClick,
                 pressed: false,
                 allowAppSwitcherHold: false
             )
         case .forward:
-            if automation.advanceAppSwitcher() {
-                lastAction = "App switcher · next application"
-                controller.playHaptic(.selection)
-            } else {
-                failAppSwitcherHold(automation.lastResult)
-            }
+            stepAppSwitcher(.forward)
         case .backward:
-            if automation.reverseAppSwitcher() {
-                lastAction = "App switcher · previous application"
-                controller.playHaptic(.selection)
-            } else {
-                failAppSwitcherHold(automation.lastResult)
-            }
+            stepAppSwitcher(.backward)
         case .select:
             appSwitcherSafetyGeneration += 1
+            appSwitcherStick.reset()
             let succeeded = automation.endAppSwitcher()
             lastAction = succeeded
                 ? "Application selected"
@@ -768,6 +768,7 @@ final class AppModel: ObservableObject {
             }
         case .cancel:
             appSwitcherSafetyGeneration += 1
+            appSwitcherStick.reset()
             let succeeded = automation.cancelAppSwitcher()
             lastAction = succeeded
                 ? "App switcher cancelled"
@@ -790,11 +791,12 @@ final class AppModel: ObservableObject {
             return
         }
         appSwitcherSafetyGeneration += 1
+        appSwitcherStick.reset()
         let safetyGeneration = appSwitcherSafetyGeneration
-        lastAction = "App switcher · release PS to select"
+        lastAction = "App switcher · release touchpad to select"
         hud.show(
             "App switcher",
-            detail: "L1 / Left back · R1 / Right forward · Circle cancels",
+            detail: "Right stick or D-pad to move · Circle cancels",
             color: .systemBlue
         )
         controller.playHaptic(.selection)
@@ -813,7 +815,7 @@ final class AppModel: ObservableObject {
             self.lastAction = "App switcher timed out safely"
             self.hud.show(
                 "App switcher closed",
-                detail: "Hold PS again to reopen it",
+                detail: "Hold the touchpad click again to reopen it",
                 color: .systemGray
             )
             self.controller.playHaptic(.warning)
@@ -822,10 +824,29 @@ final class AppModel: ObservableObject {
 
     private func failAppSwitcherHold(_ message: String) {
         appSwitcherSafetyGeneration += 1
+        appSwitcherStick.reset()
         if appSwitcherHold.cancel() {
             _ = automation.cancelAppSwitcher()
         }
         feedbackFailure(message)
+    }
+
+    private func stepAppSwitcher(_ direction: AppSwitcherStickDirection) {
+        let succeeded: Bool
+        switch direction {
+        case .forward:
+            succeeded = automation.advanceAppSwitcher()
+        case .backward:
+            succeeded = automation.reverseAppSwitcher()
+        }
+        guard succeeded else {
+            failAppSwitcherHold(automation.lastResult)
+            return
+        }
+        lastAction = direction == .forward
+            ? "App switcher · next application"
+            : "App switcher · previous application"
+        controller.playHaptic(.selection)
     }
 
     private func mouseButton(for action: MappedAction) -> CGMouseButton? {
@@ -1533,6 +1554,7 @@ final class AppModel: ObservableObject {
 
     private func controllerTransportChanged(_ transport: ControllerTransport) {
         appSwitcherSafetyGeneration += 1
+        appSwitcherStick.reset()
         if appSwitcherHold.cancel() {
             _ = automation.cancelAppSwitcher()
         }
@@ -1674,6 +1696,7 @@ final class AppModel: ObservableObject {
             _ = automation.toggleSystemDictation()
         }
         appSwitcherSafetyGeneration += 1
+        appSwitcherStick.reset()
         if appSwitcherHold.cancel() {
             _ = automation.cancelAppSwitcher()
         }

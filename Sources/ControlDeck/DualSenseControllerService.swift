@@ -582,11 +582,13 @@ final class DualSenseControllerService: ObservableObject {
     }
 
     private func handleRightTrigger(_ value: Float) {
-        if value >= 0.88 && !rightTriggerFired {
+        // Fire just past the adaptive-trigger resistance point. Requiring a
+        // near-bottomed-out pull made screenshot selection feel intermittent.
+        if value >= 0.7 && !rightTriggerFired {
             rightTriggerFired = true
             lastInput = "R2"
             onEvent?(.button(.r2, pressed: true))
-        } else if value <= 0.25 {
+        } else if value <= 0.3 {
             if rightTriggerFired {
                 onEvent?(.button(.r2, pressed: false))
             }
