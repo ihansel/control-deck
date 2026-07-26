@@ -1,5 +1,81 @@
 import Foundation
 
+struct DualSenseBluetoothMicrophonePacket: Equatable, Sendable {
+    let sequence: UInt8
+    let opusPayload: Data
+    let arrivalNanoseconds: UInt64
+}
+
+struct DualSenseBluetoothPacketTiming: Equatable, Sendable {
+    let concealCount: Int
+    let timelineGaps: Int
+    let isDuplicate: Bool
+}
+
+struct DualSenseBluetoothPacketTimeline: Sendable {
+    private var lastSequence: UInt8?
+    private var lastArrivalNanoseconds: UInt64?
+    private let packetDurationNanoseconds: UInt64 = 10_000_000
+
+    mutating func reset() {
+        lastSequence = nil
+        lastArrivalNanoseconds = nil
+    }
+
+    mutating func observe(
+        _ packet: DualSenseBluetoothMicrophonePacket
+    ) -> DualSenseBluetoothPacketTiming {
+        defer {
+            lastSequence = packet.sequence
+            lastArrivalNanoseconds = packet.arrivalNanoseconds
+        }
+        guard let previousSequence = lastSequence,
+              let previousArrival = lastArrivalNanoseconds,
+              packet.arrivalNanoseconds >= previousArrival
+        else {
+            return DualSenseBluetoothPacketTiming(
+                concealCount: 0,
+                timelineGaps: 0,
+                isDuplicate: false
+            )
+        }
+
+        let elapsed = packet.arrivalNanoseconds - previousArrival
+        let elapsedSlots = max(
+            1,
+            Int(
+                (elapsed + packetDurationNanoseconds / 2) /
+                    packetDurationNanoseconds
+            )
+        )
+        let clockGaps = min(50, max(0, elapsedSlots - 1))
+        let sequenceDelta =
+            (Int(packet.sequence) - Int(previousSequence) + 16) % 16
+
+        if sequenceDelta == 0, elapsedSlots < 8 {
+            return DualSenseBluetoothPacketTiming(
+                concealCount: 0,
+                timelineGaps: clockGaps,
+                isDuplicate: true
+            )
+        }
+
+        let sequenceGaps: Int
+        if sequenceDelta > 0, sequenceDelta <= 8 {
+            sequenceGaps = sequenceDelta - 1
+        } else {
+            // A four-bit sequence wraps every 160 ms. Only use the arrival
+            // clock for a large/ambiguous discontinuity.
+            sequenceGaps = clockGaps
+        }
+        return DualSenseBluetoothPacketTiming(
+            concealCount: min(sequenceGaps, clockGaps),
+            timelineGaps: clockGaps,
+            isDuplicate: false
+        )
+    }
+}
+
 struct DualSenseBluetoothControlFrame: Equatable {
     let leftTrigger: UInt8
     let buttons0: UInt8
@@ -149,14 +225,16 @@ enum DualSenseBluetoothAudioProtocol {
         return report
     }
 
-    /// Extracts the 71-byte Opus frame from an IOHID input callback.
+    /// Extracts the 71-byte Opus frame and its transport timing metadata from
+    /// an IOHID input callback.
     ///
     /// IOHID implementations differ on whether the report ID is also present
     /// at byte zero, so both callback layouts are accepted.
-    static func microphoneOpusPayload(
+    static func microphonePacket(
         reportID: UInt32,
-        bytes: [UInt8]
-    ) -> Data? {
+        bytes: [UInt8],
+        arrivalNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds
+    ) -> DualSenseBluetoothMicrophonePacket? {
         guard reportID == 0x31, !bytes.isEmpty else { return nil }
 
         let includesReportID = inputBufferIncludesReportID(
@@ -177,7 +255,23 @@ enum DualSenseBluetoothAudioProtocol {
         // other valid Opus TOCs as well so a firmware bitrate change does not
         // unnecessarily break capture.
         guard !payload.isEmpty else { return nil }
-        return Data(payload)
+        return DualSenseBluetoothMicrophonePacket(
+            sequence: (bytes[typeOffset] >> 4) & 0x0f,
+            opusPayload: Data(payload),
+            arrivalNanoseconds: arrivalNanoseconds
+        )
+    }
+
+    /// Compatibility helper for validation callers. Live capture uses
+    /// `microphonePacket` so sequence and arrival timing are preserved.
+    static func microphoneOpusPayload(
+        reportID: UInt32,
+        bytes: [UInt8]
+    ) -> Data? {
+        microphonePacket(
+            reportID: reportID,
+            bytes: bytes
+        )?.opusPayload
     }
 
     /// IOHID normally includes the report ID in its callback buffer, but some

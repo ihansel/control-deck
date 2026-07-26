@@ -110,6 +110,13 @@ final class AudioDeviceService: ObservableObject {
         )
     }
 
+    /// The physical USB input currently backing the stable controller
+    /// microphone. SpeechTranscriber uses this ID directly, so choosing the
+    /// controller never changes the Mac's system-default input.
+    func speechInputDeviceID() -> AudioObjectID? {
+        dualSenseInputDevice()
+    }
+
     @discardableResult
     func playControllerTone(
         frequency: Float = 740,

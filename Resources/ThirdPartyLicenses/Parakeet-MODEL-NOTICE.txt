@@ -1,0 +1,8 @@
+Parakeet Realtime EOU 120M model notice
+
+ControlDeck optionally downloads the CoreML conversion published at:
+https://huggingface.co/FluidInference/parakeet-realtime-eou-120m-coreml
+
+The model is not bundled with ControlDeck. It is licensed separately under
+the NVIDIA Open Model License:
+https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/

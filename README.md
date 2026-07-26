@@ -158,12 +158,35 @@ DualSense microphone → wireless audio → decode and buffer
 ControlDeck publishes the result as a stable, selectable 48 kHz microphone. It
 works with Codex's normal capture and transcription, does not permanently
 replace the Mac's default microphone, and carefully separates audio packets
-from controller input so speech cannot become phantom button presses.
+from controller input so speech cannot become phantom button presses. The
+decoder preserves the Bluetooth packet clock, rejects duplicates and uses Opus
+loss concealment only when sequence and timing both confirm a missing frame.
 
 USB uses the controller's physical audio device. Bluetooth uses the userspace
 bridge and requires no administrator installation or custom audio driver.
 
 [Read how the Bluetooth microphone works →](Docs/BluetoothMicrophone.md)
+
+### Dictation engines and microphone quality
+
+Outside Codex and Claude, **System** uses Apple SpeechTranscriber and remains the
+default. Optional **Live**, **Balanced** and **High Accuracy** downloads provide
+Parakeet EOU and WhisperKit alternatives. The local path preserves short and
+final phrases, uses Core Audio’s channel conversion for USB microphones, and
+applies bounded noise-aware level correction for quiet controller input.
+
+These local engines are optional speech extensions, not bundled model weights.
+Choose one in **Setup → Dictation & speech extensions** to download it with
+visible progress. Models are stored in
+`~/Library/Application Support/ControlDeck/Models`, can be removed individually
+from the same screen, and never inflate the app or DMG. Release packaging fails
+if model weights are accidentally copied into the app bundle.
+
+The controller microphone remains the default input. In **Setup → Dictation
+outside Codex and Claude**, turn off **Use the controller microphone when
+available** to compare the same engine with the Mac’s selected microphone; L2
+still starts and stops dictation. This makes it possible to distinguish model
+accuracy from microphone/acoustic quality without changing the system default.
 
 ## App-aware profiles
 
@@ -255,7 +278,14 @@ For the everyday development loop, build and launch in one command:
 ./script/build_and_run.sh
 ```
 
-The local bundle is ad-hoc signed for development on the Mac that built it.
+This incremental, native-architecture loop uses a stable signing identity when
+one is explicitly configured in `.codex/development-signing-identity`; otherwise
+it falls back to ad-hoc signing. Stable signing is important for testing pointer,
+keyboard, dictation and screen-capture features because macOS attaches privacy
+permissions to the app's signed identity. The identity is local-only and the
+file is ignored by Git. After allowing `codesign` to use the key once, routine
+Codex builds and reloads do not request the login password. The full universal
+local bundle can still be built with `./scripts/build-app.sh`.
 Public downloads must use Developer ID signing and Apple notarization; the
 release process deliberately fails closed instead of asking users to bypass
 Gatekeeper. The published DMG and repository ZIP are universal builds for both

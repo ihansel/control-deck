@@ -10,6 +10,16 @@ let package = Package(
     products: [
         .executable(name: "control-deck", targets: ["ControlDeck"])
     ],
+    dependencies: [
+        .package(
+            url: "https://github.com/FluidInference/FluidAudio.git",
+            exact: "0.15.5"
+        ),
+        .package(
+            url: "https://github.com/argmaxinc/argmax-oss-swift.git",
+            exact: "1.0.0"
+        )
+    ],
     targets: [
         .systemLibrary(
             name: "COpus",
@@ -21,11 +31,35 @@ let package = Package(
         ),
         .executableTarget(
             name: "ControlDeck",
-            dependencies: ["COpus"],
+            dependencies: [
+                "COpus",
+                .product(
+                    name: "FluidAudio",
+                    package: "FluidAudio"
+                ),
+                .product(
+                    name: "WhisperKit",
+                    package: "argmax-oss-swift"
+                )
+            ],
             path: "Sources/ControlDeck",
             resources: [
                 .process("Resources")
             ]
+        ),
+        .executableTarget(
+            name: "LocalSpeechSmokeTest",
+            dependencies: [
+                .product(
+                    name: "FluidAudio",
+                    package: "FluidAudio"
+                ),
+                .product(
+                    name: "WhisperKit",
+                    package: "argmax-oss-swift"
+                )
+            ],
+            path: "Tools/LocalSpeechSmokeTest"
         )
     ],
     swiftLanguageModes: [.v5]

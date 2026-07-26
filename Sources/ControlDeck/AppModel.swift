@@ -1,4 +1,5 @@
 import AppKit
+import AudioToolbox
 import Combine
 import Foundation
 import OSLog
@@ -8,6 +9,8 @@ final class AppModel: ObservableObject {
     let controller = DualSenseControllerService()
     let audio = AudioDeviceService()
     let bluetoothMicrophone = BluetoothMicrophoneService()
+    let appleSpeechTranscriber = AppleSpeechTranscriptionService()
+    let localSpeechTranscriber = LocalSpeechTranscriptionService()
     let automation = CodexAutomation()
     let taskMonitor = CodexTaskMonitor()
     let profiles: ProfileStore
@@ -30,6 +33,25 @@ final class AppModel: ObservableObject {
     }
     @Published var statusHaptics = ControllerPreferences.statusHaptics {
         didSet { ControllerPreferences.statusHaptics = statusHaptics }
+    }
+    @Published var generalDictationEngine =
+        ControllerPreferences.generalDictationEngine {
+        didSet {
+            ControllerPreferences.generalDictationEngine =
+                generalDictationEngine
+            if generalDictationEngine != .appleSpeech {
+                localSpeechTranscriber.prepareModel(
+                    generalDictationEngine
+                )
+            }
+        }
+    }
+    @Published var generalDictationUsesControllerMicrophone =
+        ControllerPreferences.generalDictationUsesControllerMicrophone {
+        didSet {
+            ControllerPreferences.generalDictationUsesControllerMicrophone =
+                generalDictationUsesControllerMicrophone
+        }
     }
     @Published private(set) var selfTestRunning = false
     @Published private(set) var microphoneDiagnosticRunning = false
@@ -58,6 +80,12 @@ final class AppModel: ObservableObject {
     private var universalDictationMode: VoiceCaptureMode?
     private var universalDictationGeneration = 0
     private var universalDictationPressed = false
+    private var universalDictationTransport: ControllerTransport?
+    private var universalDictationProvider:
+        UniversalDictationProvider?
+    private var universalTranscriberReady = false
+    private var universalTranscriptionStopPending = false
+    private var universalTranscriptionSessionGeneration = 0
     private var soundGeneration = 0
     private var heldMouseInputs: [ControllerInput: CGMouseButton] = [:]
     private var appSwitcherHold = AppSwitcherHoldGate()
@@ -148,6 +176,28 @@ final class AppModel: ObservableObject {
             )
             self.controller.playHaptic(copied ? .success : .selection)
         }
+        localSpeechTranscriber.onPartialTranscript = { [weak self] text in
+            guard let self, !text.isEmpty else { return }
+            self.hud.showStreaming(
+                "\(self.generalDictationEngine.label) streaming",
+                detail: text,
+                color: CodexTaskState.listening.color
+            )
+        }
+        localSpeechTranscriber.onInputLevel = { [weak self] level in
+            self?.hud.updateInputLevel(level)
+        }
+        appleSpeechTranscriber.onPartialTranscript = { [weak self] text in
+            guard let self, !text.isEmpty else { return }
+            self.hud.showStreaming(
+                "System dictation · live",
+                detail: text,
+                color: CodexTaskState.listening.color
+            )
+        }
+        appleSpeechTranscriber.onInputLevel = { [weak self] level in
+            self?.hud.updateInputLevel(level)
+        }
         taskMonitor.onTasksChanged = { [weak self] tasks in
             self?.tasksChanged(tasks)
         }
@@ -194,6 +244,11 @@ final class AppModel: ObservableObject {
         }
         controller.start()
         taskMonitor.start()
+        if generalDictationEngine != .appleSpeech {
+            localSpeechTranscriber.prepareModel(
+                generalDictationEngine
+            )
+        }
         updateState(.idle)
         logger.notice(
             "ControlDeck started; controllerAudio=\(self.audio.controllerAudioAvailable) accessibility=\(self.automation.accessibilityTrusted)"
@@ -292,6 +347,16 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func openSpeechRecognitionPrivacySettings() {
+        let destinations = [
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_SpeechRecognition",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition"
+        ]
+        if let url = destinations.compactMap(URL.init(string:)).first {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     func openCodexMicrophoneSettings() {
         if controller.transport == .bluetooth {
             _ = bluetoothMicrophone.prepare()
@@ -314,6 +379,8 @@ final class AppModel: ObservableObject {
         }
         guard !pushToTalkActive,
               !voiceStopPending,
+              !universalDictationActive,
+              !universalTranscriptionStopPending,
               !microphoneDiagnosticRunning
         else {
             feedbackFailure(
@@ -386,7 +453,12 @@ final class AppModel: ObservableObject {
             )
             return
         }
-        guard !pushToTalkActive, !voiceStopPending, !selfTestRunning else {
+        guard !pushToTalkActive,
+              !voiceStopPending,
+              !universalDictationActive,
+              !universalTranscriptionStopPending,
+              !selfTestRunning
+        else {
             feedbackFailure("Finish the current test or dictation first")
             return
         }
@@ -651,7 +723,8 @@ final class AppModel: ObservableObject {
             return
         }
 
-        if input == .l2, universalDictationActive {
+        if universalDictationActive,
+           universalDictationMode?.initiator == input {
             handleUniversalDictation(input: input, pressed: pressed)
             return
         }
@@ -688,7 +761,7 @@ final class AppModel: ObservableObject {
             }
             return
         }
-        if action == .systemDictation, input == .l2 {
+        if action == .systemDictation {
             handleUniversalDictation(input: input, pressed: pressed)
             return
         }
@@ -1154,33 +1227,177 @@ final class AppModel: ObservableObject {
                 return
             }
             guard !universalDictationActive else { return }
-            guard automation.toggleSystemDictation() else {
-                feedbackFailure(automation.lastResult)
+            guard !universalTranscriptionStopPending else {
+                feedbackFailure(
+                    "Transcription is finishing the previous message"
+                )
                 return
             }
+
+            pointer.stop()
+            touchpad.cancel()
+            if profiles.activeKind == .claude,
+               automation.startClaudeDictation() {
+                universalTranscriptionSessionGeneration += 1
+                universalDictationProvider = .claudeNative
+                universalDictationTransport = nil
+                universalDictationActive = true
+                universalDictationMode = .pendingTapOrHold(input)
+                universalTranscriberReady = true
+                lastAction = "Claude dictation is listening"
+                hud.show(
+                    "Claude dictation",
+                    detail: "Using Claude's native transcription",
+                    color: CodexTaskState.listening.color
+                )
+                controller.playHaptic(.selection)
+                scheduleUniversalHoldDetection(
+                    input: input,
+                    generation: generation
+                )
+                return
+            }
+
+            let requestedTransport = controller.transport
+            let requestedEngine = generalDictationEngine
+            let usesControllerMicrophone =
+                generalDictationUsesControllerMicrophone &&
+                    requestedTransport != .unknown
+            var usesExternalPCM = false
+            var inputDeviceID: AudioObjectID?
+            if requestedTransport == .usb, usesControllerMicrophone {
+                audio.refresh()
+                inputDeviceID = audio.speechInputDeviceID()
+                lastAction = inputDeviceID == nil
+                    ? "Preparing the Mac microphone for \(requestedEngine.label)"
+                    : "Preparing the DualSense microphone for \(requestedEngine.label)"
+            } else if requestedTransport == .bluetooth,
+                      usesControllerMicrophone {
+                usesExternalPCM = true
+                lastAction =
+                    "Preparing the wireless microphone for \(requestedEngine.label)"
+                audio.removeCodexMicrophone()
+                guard bluetoothMicrophone.startCapture() else {
+                    feedbackFailure(bluetoothMicrophone.lastResult)
+                    return
+                }
+                guard controller.setBluetoothMicrophoneCapture(true) else {
+                    bluetoothMicrophone.stopCapture()
+                    feedbackFailure(controller.lastBluetoothMicrophoneResult)
+                    return
+                }
+                // Apple transcription consumes decoded controller PCM directly.
+                // The separately published Core Audio device remains available
+                // to apps that need a conventional microphone endpoint.
+            } else {
+                lastAction =
+                    "Preparing the Mac microphone for \(requestedEngine.label)"
+            }
+
+            universalTranscriptionSessionGeneration += 1
+            let speechSession = universalTranscriptionSessionGeneration
+            universalDictationProvider = requestedEngine == .appleSpeech
+                ? .appleSpeech
+                : .localSpeech
+            universalDictationTransport = requestedTransport
+            universalTranscriberReady = false
             universalDictationActive = true
             universalDictationMode = .pendingTapOrHold(input)
-            lastAction = "Dictating into the focused text field"
+
+            let started: Bool
+            if requestedEngine != .appleSpeech {
+                started = localSpeechTranscriber.begin(
+                    engine: requestedEngine,
+                    inputDeviceID: inputDeviceID,
+                    usesExternalPCM: usesExternalPCM,
+                    contextualStrings: speechContextualStrings()
+                ) { [weak self] result in
+                    guard let self,
+                          self.universalTranscriptionSessionGeneration ==
+                            speechSession
+                    else { return }
+                    switch result {
+                    case .success:
+                        self.universalTranscriberReady = true
+                        self.lastAction =
+                            "\(requestedEngine.label) is listening"
+                    case let .failure(error):
+                        self.failUniversalTranscriptionStart(
+                            error.localizedDescription
+                        )
+                        if case .microphonePermissionDenied = error {
+                            self.openMicrophonePrivacySettings()
+                        }
+                    }
+                }
+            } else {
+                started = appleSpeechTranscriber.begin(
+                    inputDeviceID: inputDeviceID,
+                    externalPCMSampleRate: usesExternalPCM
+                        ? Double(
+                            DualSenseBluetoothAudioProtocol
+                                .microphoneSampleRate
+                        )
+                        : nil,
+                    contextualStrings: speechContextualStrings()
+                ) { [weak self] result in
+                    guard let self,
+                          self.universalTranscriptionSessionGeneration ==
+                            speechSession
+                    else { return }
+                    switch result {
+                    case .success:
+                        self.universalTranscriberReady = true
+                        self.lastAction =
+                            "Apple SpeechTranscriber is listening"
+                    case let .failure(error):
+                        self.failUniversalTranscriptionStart(
+                            error.localizedDescription
+                        )
+                        switch error {
+                        case .microphonePermissionDenied:
+                            self.openMicrophonePrivacySettings()
+                        case .speechPermissionDenied:
+                            self.openSpeechRecognitionPrivacySettings()
+                        default:
+                            break
+                        }
+                    }
+                }
+            }
+            guard started else {
+                return
+            }
+            if usesExternalPCM {
+                bluetoothMicrophone.setDecodedPCMHandler(
+                    requestedEngine != .appleSpeech
+                        ? localSpeechTranscriber.externalPCMHandler
+                        : appleSpeechTranscriber.externalPCMHandler
+                )
+            }
+            if requestedTransport == .usb, usesControllerMicrophone {
+                controller.setMicrophoneLED(.off)
+            }
+            lastAction = "Preparing \(requestedEngine.label)"
             hud.show(
-                "Universal dictation",
-                detail: "Speak now · release after holding, or tap again to stop",
+                requestedEngine != .appleSpeech
+                    ? "\(requestedEngine.label) dictation"
+                    : "Apple dictation",
+                detail: !usesControllerMicrophone
+                    ? "Using the Mac’s selected input · the text field stays focused"
+                    : requestedEngine == .parakeetEOU120M
+                    ? "Low-latency local streaming · live text appears here"
+                    : requestedEngine == .whisperKitBaseEnglish
+                    ? "Local Whisper transcription · finalized when you stop"
+                    : "On-device transcription · the text field stays focused",
                 color: CodexTaskState.listening.color
             )
             controller.playHaptic(.selection)
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
-                [weak self] in
-                guard let self,
-                      self.universalDictationPressed,
-                      self.universalDictationGeneration == generation,
-                      self.universalDictationMode == .pendingTapOrHold(input)
-                else {
-                    return
-                }
-                self.universalDictationMode = .hold(input)
-                self.lastAction =
-                    "Release \(input.label) to stop universal dictation"
-            }
+            scheduleUniversalHoldDetection(
+                input: input,
+                generation: generation
+            )
             return
         }
 
@@ -1203,24 +1420,245 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func speechContextualStrings() -> [String] {
+        var terms = [
+            "ControlDeck",
+            "DualSense",
+            "Codex",
+            "OpenAI",
+            "Claude",
+            "Anthropic",
+            "WhisperKit",
+            "Parakeet",
+            profiles.activeProfile.name,
+            profiles.activeProfile.kind.label
+        ]
+        if let appName =
+            NSWorkspace.shared.frontmostApplication?.localizedName {
+            terms.append(appName)
+        }
+        switch profiles.activeProfile.kind {
+        case .codex, .xcode, .terminal:
+            terms += [
+                "Swift",
+                "SwiftUI",
+                "AppKit",
+                "GitHub",
+                "pull request",
+                "repository",
+                "terminal"
+            ]
+        case .spotify, .logic:
+            terms += ["playlist", "track", "album", "Spotify", "Logic Pro"]
+        case .chrome:
+            terms += ["Google Chrome", "website", "browser", "new tab"]
+        default:
+            break
+        }
+        var seen = Set<String>()
+        return terms.filter {
+            !$0.isEmpty && seen.insert($0.lowercased()).inserted
+        }
+    }
+
     private func stopUniversalDictation(handsFree: Bool) {
         universalDictationActive = false
         universalDictationMode = nil
         universalDictationPressed = false
         universalDictationGeneration += 1
-        let succeeded = automation.toggleSystemDictation()
-        lastAction = succeeded
-            ? "Dictation finished in the focused text field"
-            : automation.lastResult
-        if succeeded {
-            hud.show(
-                handsFree ? "Dictation stopped" : "Dictation complete",
-                detail: "Text inserted into the focused field",
-                color: .systemGreen
-            )
-            controller.playHaptic(.success)
+        universalTranscriptionStopPending = true
+        let speechSession = universalTranscriptionSessionGeneration
+        let transport = universalDictationTransport ?? controller.transport
+        let provider = universalDictationProvider
+
+        if universalDictationProvider == .claudeNative {
+            universalTranscriptionStopPending = false
+            universalTranscriberReady = false
+            universalDictationProvider = nil
+            let stopped = automation.stopClaudeDictation()
+            if stopped {
+                lastAction = "Claude dictation complete"
+                hud.show(
+                    "Claude dictation complete",
+                    detail: "Claude's native transcript is ready",
+                    color: .systemGreen
+                )
+                controller.playHaptic(.success)
+            } else {
+                feedbackFailure(automation.lastResult)
+            }
+            updateAggregateState()
+            return
+        }
+
+        let stopTranscription = { [weak self] in
+            guard let self,
+                  self.universalTranscriptionSessionGeneration ==
+                    speechSession
+            else { return }
+            if provider == .localSpeech {
+                let engine = self.generalDictationEngine
+                let stopped = self.localSpeechTranscriber.finish(
+                    recordingStopped: { [weak self] in
+                        guard let self,
+                              self.universalTranscriptionSessionGeneration ==
+                                speechSession
+                        else { return }
+                        self.stopVoiceCaptureResources(for: transport)
+                        self.universalDictationTransport = nil
+                        self.universalTranscriberReady = false
+                    }
+                ) { [weak self] result in
+                    guard let self,
+                          self.universalTranscriptionSessionGeneration ==
+                            speechSession
+                    else { return }
+                    self.universalTranscriptionStopPending = false
+                    self.universalTranscriberReady = false
+                    self.universalDictationProvider = nil
+                    self.universalDictationTransport = nil
+                    switch result {
+                    case let .success(transcription):
+                        let fallbackDetail = transcription.usedFallback
+                            ? "Live transcription recovered with \(transcription.engineUsed.engineName)"
+                            : transcription.insertionMethod == .accessibility
+                                ? "Transcript inserted directly"
+                                : "Transcript inserted using a protected paste"
+                        self.lastAction =
+                            "\(transcription.engineUsed.engineName) transcript inserted into the focused text field"
+                        self.hud.show(
+                            handsFree
+                                ? "\(transcription.engineUsed.label) dictation complete"
+                                : "Dictation complete",
+                            detail: fallbackDetail,
+                            color: .systemGreen
+                        )
+                        self.controller.playHaptic(.success)
+                    case let .failure(error):
+                        self.feedbackFailure(error.localizedDescription)
+                    }
+                    self.updateAggregateState()
+                }
+                if stopped {
+                    self.universalDictationProvider = nil
+                    self.lastAction = "\(engine.label) is finalizing"
+                    self.hud.show(
+                        "Finalizing \(engine.label)",
+                        detail:
+                            "The result will appear in the focused text field",
+                        color: .white
+                    )
+                } else {
+                    self.universalTranscriptionStopPending = false
+                    self.universalTranscriberReady = false
+                    self.stopVoiceCaptureResources(for: transport)
+                    self.universalDictationTransport = nil
+                    self.feedbackFailure(
+                        "\(engine.label) could not stop cleanly"
+                    )
+                }
+                return
+            }
+
+            let stopped = self.appleSpeechTranscriber.finish(
+                recordingStopped: { [weak self] in
+                    guard let self,
+                          self.universalTranscriptionSessionGeneration ==
+                            speechSession
+                    else { return }
+                    self.stopVoiceCaptureResources(for: transport)
+                    self.universalDictationTransport = nil
+                    self.universalTranscriberReady = false
+                }
+            ) { [weak self] result in
+                guard let self,
+                      self.universalTranscriptionSessionGeneration ==
+                        speechSession
+                else { return }
+                self.universalTranscriptionStopPending = false
+                self.universalTranscriberReady = false
+                self.universalDictationProvider = nil
+                self.universalDictationTransport = nil
+                switch result {
+                case let .success(transcription):
+                    self.lastAction =
+                        "Apple transcript inserted into the focused text field"
+                    self.hud.show(
+                        handsFree
+                            ? "Apple dictation complete"
+                            : "Dictation complete",
+                        detail: transcription.insertionMethod ==
+                            .accessibility
+                            ? "Text inserted directly into the focused field"
+                            : "Text inserted using a protected paste",
+                        color: .systemGreen
+                    )
+                    self.controller.playHaptic(.success)
+                case let .failure(error):
+                    self.feedbackFailure(error.localizedDescription)
+                }
+                self.updateAggregateState()
+            }
+            if stopped {
+                self.universalDictationProvider = nil
+                self.lastAction = "Apple SpeechTranscriber is finishing"
+                self.hud.show(
+                    "Transcribing on this Mac",
+                    detail: "The result will appear in the focused text field",
+                    color: .white
+                )
+            } else {
+                self.universalTranscriptionStopPending = false
+                self.universalTranscriberReady = false
+                self.stopVoiceCaptureResources(for: transport)
+                self.universalDictationTransport = nil
+                self.feedbackFailure(
+                    "Apple SpeechTranscriber could not stop cleanly"
+                )
+            }
+        }
+
+        if transport == .bluetooth, universalTranscriberReady {
+            _ = controller.setBluetoothMicrophoneCapture(false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+                stopTranscription()
+            }
         } else {
-            feedbackFailure(automation.lastResult)
+            stopTranscription()
+        }
+    }
+
+    private func failUniversalTranscriptionStart(_ message: String) {
+        universalDictationActive = false
+        universalDictationMode = nil
+        universalDictationPressed = false
+        universalTranscriberReady = false
+        universalTranscriptionStopPending = false
+        universalDictationProvider = nil
+        if let transport = universalDictationTransport {
+            stopVoiceCaptureResources(for: transport)
+        }
+        universalDictationTransport = nil
+        hud.dismiss()
+        feedbackFailure(message)
+    }
+
+    private func scheduleUniversalHoldDetection(
+        input: ControllerInput,
+        generation: Int
+    ) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
+            [weak self] in
+            guard let self,
+                  self.universalDictationPressed,
+                  self.universalDictationGeneration == generation,
+                  self.universalDictationMode == .pendingTapOrHold(input)
+            else {
+                return
+            }
+            self.universalDictationMode = .hold(input)
+            self.lastAction =
+                "Release \(input.label) to stop universal dictation"
         }
     }
 
@@ -1242,6 +1680,8 @@ final class AppModel: ObservableObject {
             finish(action.label, succeeded: true)
         case .codexDictation:
             toggleVoiceCapture()
+        case .systemDictation:
+            toggleUniversalDictation()
         case .codexPreviousTask:
             selectAdjacentTask(offset: -1)
         case .codexNextTask:
@@ -1262,6 +1702,12 @@ final class AppModel: ObservableObject {
         default:
             finish(action.label, succeeded: automation.run(action))
         }
+    }
+
+    private func toggleUniversalDictation() {
+        let initiator = universalDictationMode?.initiator ?? .microphone
+        handleUniversalDictation(input: initiator, pressed: true)
+        handleUniversalDictation(input: initiator, pressed: false)
     }
 
     var selectedTask: RecentCodexTask? {
@@ -1558,13 +2004,13 @@ final class AppModel: ObservableObject {
         if appSwitcherHold.cancel() {
             _ = automation.cancelAppSwitcher()
         }
-        if transport == .unknown, universalDictationActive {
-            universalDictationActive = false
-            universalDictationMode = nil
-            universalDictationPressed = false
-            universalDictationGeneration += 1
-            _ = automation.toggleSystemDictation()
-            lastAction = "Controller disconnected · dictation stopped"
+        if (universalDictationActive ||
+                universalTranscriptionStopPending),
+           let capturedTransport = universalDictationTransport,
+           capturedTransport != transport {
+            cancelUniversalTranscription(
+                reason: "Controller connection changed"
+            )
         }
         if selfTestRunning {
             selfTestGeneration += 1
@@ -1610,11 +2056,26 @@ final class AppModel: ObservableObject {
     }
 
     private func isVoiceStopEvent(_ event: ControllerEvent) -> Bool {
-        guard pushToTalkActive,
-              case let .button(input, pressed) = event
+        guard case let .button(input, pressed) = event
         else {
             return false
         }
+        if universalDictationActive {
+            if input == .microphone, pressed {
+                return true
+            }
+            switch universalDictationMode {
+            case let .pendingTapOrHold(initiator):
+                return input == initiator && !pressed
+            case let .hold(initiator):
+                return input == initiator && !pressed
+            case let .toggle(initiator):
+                return input == initiator && pressed
+            case nil:
+                return false
+            }
+        }
+        guard pushToTalkActive else { return false }
         if input == .microphone, pressed {
             return true
         }
@@ -1667,6 +2128,35 @@ final class AppModel: ObservableObject {
         )
     }
 
+    private func cancelUniversalTranscription(reason: String) {
+        guard universalDictationActive ||
+                universalTranscriptionStopPending ||
+                universalDictationTransport != nil
+        else { return }
+        universalTranscriptionSessionGeneration += 1
+        universalDictationGeneration += 1
+        universalDictationActive = false
+        universalDictationMode = nil
+        universalDictationPressed = false
+        universalTranscriberReady = false
+        universalTranscriptionStopPending = false
+        if let transport = universalDictationTransport {
+            stopVoiceCaptureResources(for: transport)
+        }
+        universalDictationTransport = nil
+        if universalDictationProvider == .claudeNative {
+            _ = automation.stopClaudeDictation()
+        } else if universalDictationProvider == .localSpeech {
+            localSpeechTranscriber.cancel()
+        } else {
+            _ = appleSpeechTranscriber.cancel()
+        }
+        universalDictationProvider = nil
+        hud.dismiss()
+        lastAction = "\(reason); transcription stopped"
+        updateAggregateState()
+    }
+
     private func shutdown() {
         voiceStopGeneration += 1
         universalDictationGeneration += 1
@@ -1689,11 +2179,9 @@ final class AppModel: ObservableObject {
                 reason: "ControlDeck is closing"
             )
         }
-        if universalDictationActive {
-            universalDictationActive = false
-            universalDictationMode = nil
-            universalDictationPressed = false
-            _ = automation.toggleSystemDictation()
+        if universalDictationActive ||
+            universalTranscriptionStopPending {
+            cancelUniversalTranscription(reason: "ControlDeck is closing")
         }
         appSwitcherSafetyGeneration += 1
         appSwitcherStick.reset()
@@ -1742,7 +2230,10 @@ final class AppModel: ObservableObject {
     }
 
     private func updateAggregateState() {
-        guard !pushToTalkActive, !voiceStopPending else { return }
+        guard !pushToTalkActive,
+              !voiceStopPending,
+              !universalTranscriptionStopPending
+        else { return }
         updateState(
             selectedTask?.state ??
                 CodexTaskState.aggregate(recentTasks.map(\.state))
@@ -1826,4 +2317,19 @@ private enum VoiceCaptureMode: Equatable {
     case pendingTapOrHold(ControllerInput)
     case hold(ControllerInput)
     case toggle(ControllerInput?)
+
+    var initiator: ControllerInput? {
+        switch self {
+        case let .pendingTapOrHold(input), let .hold(input):
+            input
+        case let .toggle(input):
+            input
+        }
+    }
+}
+
+private enum UniversalDictationProvider {
+    case appleSpeech
+    case localSpeech
+    case claudeNative
 }

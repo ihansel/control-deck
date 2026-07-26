@@ -11,6 +11,9 @@ final class BluetoothMicrophoneService: ObservableObject {
     @Published private(set) var peakInputLevel: Float = 0
     @Published private(set) var receivedPacketCount = 0
     @Published private(set) var decodedFrameCount = 0
+    @Published private(set) var concealedFrameCount = 0
+    @Published private(set) var timelineGapCount = 0
+    @Published private(set) var duplicatePacketCount = 0
     @Published private(set) var lastResult = "Wireless microphone is offline"
 
     private let publisher = ProcessTapMicrophoneService()
@@ -19,11 +22,22 @@ final class BluetoothMicrophoneService: ObservableObject {
     private var sourceNode: AVAudioSourceNode?
     private var engineConfigurationObserver: NSObjectProtocol?
     private var captureGeneration: UInt64?
+    private var captureStartedAt: ContinuousClock.Instant?
     private var loggedFirstDecodedFrame = false
+    private var decodedPCMHandler: (@Sendable ([Float], Int) -> Void)?
     private let logger = Logger(
         subsystem: "com.ianhansel.controldeck",
         category: "bluetooth-microphone"
     )
+
+    /// The public aggregate fed by the private Bluetooth decoder. Consumers
+    /// can record it directly without making it the system-default microphone.
+    var speechInputDeviceID: AudioObjectID? {
+        guard isPublished,
+              publisher.aggregateDeviceID != kAudioObjectUnknown
+        else { return nil }
+        return publisher.aggregateDeviceID
+    }
 
     @discardableResult
     func prepare() -> Bool {
@@ -63,9 +77,13 @@ final class BluetoothMicrophoneService: ObservableObject {
         captureGeneration = session.generation
         receivedPacketCount = 0
         decodedFrameCount = 0
+        concealedFrameCount = 0
+        timelineGapCount = 0
+        duplicatePacketCount = 0
         inputLevel = 0
         peakInputLevel = 0
         loggedFirstDecodedFrame = false
+        captureStartedAt = ContinuousClock.now
         isCapturing = true
         lastResult = "Waiting for DualSense Bluetooth audio"
         logger.notice("Bluetooth microphone diagnostic capture started")
@@ -87,11 +105,22 @@ final class BluetoothMicrophoneService: ObservableObject {
 
     func stopCapture() {
         if isCapturing {
+            let elapsed = captureStartedAt.map {
+                ContinuousClock.now - $0
+            }
+            let elapsedSeconds = elapsed.map {
+                Double($0.components.seconds) +
+                    Double($0.components.attoseconds) / 1e18
+            } ?? 0
+            let pcmSeconds = Double(decodedFrameCount) /
+                Double(DualSenseBluetoothAudioProtocol.microphoneSampleRate)
             logger.notice(
-                "Bluetooth microphone stopped; packets=\(self.receivedPacketCount, privacy: .public) decodedFrames=\(self.decodedFrameCount, privacy: .public) peak=\(self.peakInputLevel, privacy: .public)"
+                "Bluetooth microphone stopped; packets=\(self.receivedPacketCount, privacy: .public) decodedFrames=\(self.decodedFrameCount, privacy: .public) concealedFrames=\(self.concealedFrameCount, privacy: .public) timelineGaps=\(self.timelineGapCount, privacy: .public) duplicates=\(self.duplicatePacketCount, privacy: .public) pcmSeconds=\(pcmSeconds, privacy: .public) elapsedSeconds=\(elapsedSeconds, privacy: .public) peak=\(self.peakInputLevel, privacy: .public)"
             )
         }
+        decodedPCMHandler = nil
         captureGeneration = nil
+        captureStartedAt = nil
         isCapturing = false
         pipeline.clear()
         inputLevel = 0
@@ -113,16 +142,30 @@ final class BluetoothMicrophoneService: ObservableObject {
         lastResult = "Playing a private test signal into DualSense Microphone"
     }
 
-    func ingest(_ opusPayload: Data) {
+    /// Adds a direct consumer for each decoded mono 48 kHz frame. This avoids
+    /// routing in-app transcription back through the virtual Core Audio device,
+    /// while leaving that published device available to external consumers.
+    func setDecodedPCMHandler(
+        _ handler: (@Sendable ([Float], Int) -> Void)?
+    ) {
+        decodedPCMHandler = handler
+    }
+
+    func ingest(_ packet: DualSenseBluetoothMicrophonePacket) {
         guard isCapturing,
-              opusPayload.count ==
+              packet.opusPayload.count ==
                 DualSenseBluetoothAudioProtocol.microphoneOpusByteCount
         else {
             return
         }
 
         guard let generation = captureGeneration else { return }
-        pipeline.enqueue(opusPayload, generation: generation) {
+        let pcmHandler = decodedPCMHandler
+        pipeline.enqueue(
+            packet,
+            generation: generation,
+            pcmHandler: pcmHandler
+        ) {
             [weak self] result in
             DispatchQueue.main.async {
                 guard let self,
@@ -134,6 +177,9 @@ final class BluetoothMicrophoneService: ObservableObject {
 
                 self.receivedPacketCount += result.receivedPackets
                 self.decodedFrameCount += result.decodedFrames
+                self.concealedFrameCount += result.concealedFrames
+                self.timelineGapCount += result.timelineGaps
+                self.duplicatePacketCount += result.duplicatePackets
                 self.inputLevel = result.level
                 self.peakInputLevel = max(
                     self.peakInputLevel,
@@ -252,11 +298,20 @@ private struct BluetoothDecodeResult {
     let generation: UInt64
     let receivedPackets: Int
     let decodedFrames: Int
+    let concealedFrames: Int
+    let timelineGaps: Int
+    let duplicatePackets: Int
     let level: Float
     let decodeError: Int32?
 }
 
 private final class BluetoothOpusPipeline: @unchecked Sendable {
+    private struct DecodedFrame {
+        let samples: [Float]
+        let frameCount: Int
+        let error: Int32?
+    }
+
     let ring = MicrophonePCMRingBuffer()
 
     private let queue = DispatchQueue(
@@ -267,9 +322,13 @@ private final class BluetoothOpusPipeline: @unchecked Sendable {
     private var generation: UInt64 = 0
     private var pendingPacketCount = 0
     private var pendingDecodedFrameCount = 0
+    private var pendingConcealedFrameCount = 0
+    private var pendingTimelineGapCount = 0
+    private var pendingDuplicatePacketCount = 0
     private var pendingLevel: Float = 0
     private var pendingDecodeError: Int32?
     private var totalPacketCount = 0
+    private var packetTimeline = DualSenseBluetoothPacketTimeline()
     private var lastMetricsEmissionNanoseconds: UInt64 = 0
     private let metricsEmissionIntervalNanoseconds: UInt64 = 100_000_000
 
@@ -318,8 +377,9 @@ private final class BluetoothOpusPipeline: @unchecked Sendable {
     }
 
     func enqueue(
-        _ payload: Data,
+        _ packet: DualSenseBluetoothMicrophonePacket,
         generation requestedGeneration: UInt64,
+        pcmHandler: (@Sendable ([Float], Int) -> Void)?,
         completion: @escaping (BluetoothDecodeResult) -> Void
     ) {
         queue.async { [weak self] in
@@ -329,50 +389,53 @@ private final class BluetoothOpusPipeline: @unchecked Sendable {
             else {
                 return
             }
-            var mono = [Float](
-                repeating: 0,
-                count: DualSenseBluetoothAudioProtocol.microphoneFrameCount
-            )
-            let decodedFrames = payload.withUnsafeBytes { encodedBytes in
-                mono.withUnsafeMutableBufferPointer { pcm in
-                    opus_decode_float(
-                        decoder,
-                        encodedBytes.bindMemory(to: UInt8.self).baseAddress,
-                        Int32(payload.count),
-                        pcm.baseAddress!,
-                        Int32(
-                            DualSenseBluetoothAudioProtocol.microphoneFrameCount
-                        ),
-                        0
-                    )
-                }
-            }
-
-            var level: Float = 0
-            if decodedFrames > 0 {
-                let frameCount = Int(decodedFrames)
-                self.ring.write(mono, count: frameCount)
-                var energy: Float = 0
-                for sample in mono.prefix(frameCount) {
-                    energy += sample * sample
-                }
-                let rms = sqrt(energy / Float(frameCount))
-                let decibels = 20 * log10(max(rms, 0.000_01))
-                level = min(1, max(0, (decibels + 60) / 60))
-            }
-
-            // The decode queue is serial, so reset/clear cannot interleave with
-            // this write. The generation guard also rejects packets queued by
-            // an earlier push-to-talk session.
-            guard requestedGeneration == self.generation else { return }
+            let timing = self.packetTimeline.observe(packet)
             self.pendingPacketCount += 1
             self.totalPacketCount += 1
-            self.pendingLevel = max(self.pendingLevel, level)
-            if decodedFrames > 0 {
-                self.pendingDecodedFrameCount += Int(decodedFrames)
-            } else if decodedFrames < 0 {
-                self.pendingDecodeError = decodedFrames
+            self.pendingTimelineGapCount += timing.timelineGaps
+            var level: Float = 0
+            if timing.isDuplicate {
+                self.pendingDuplicatePacketCount += 1
+            } else {
+                for _ in 0..<timing.concealCount {
+                    let concealed = self.decode(
+                        payload: nil,
+                        decoder: decoder
+                    )
+                    if concealed.frameCount > 0 {
+                        self.publish(
+                            concealed,
+                            pcmHandler: pcmHandler
+                        )
+                        self.pendingDecodedFrameCount +=
+                            concealed.frameCount
+                        self.pendingConcealedFrameCount +=
+                            concealed.frameCount
+                        level = max(
+                            level,
+                            self.level(of: concealed)
+                        )
+                    } else if let error = concealed.error {
+                        self.pendingDecodeError = error
+                        break
+                    }
+                }
+
+                let decoded = self.decode(
+                    payload: packet.opusPayload,
+                    decoder: decoder
+                )
+                if decoded.frameCount > 0 {
+                    self.publish(decoded, pcmHandler: pcmHandler)
+                    self.pendingDecodedFrameCount += decoded.frameCount
+                    level = max(level, self.level(of: decoded))
+                } else if let error = decoded.error {
+                    self.pendingDecodeError = error
+                }
             }
+
+            guard requestedGeneration == self.generation else { return }
+            self.pendingLevel = max(self.pendingLevel, level)
 
             let now = DispatchTime.now().uptimeNanoseconds
             let isFirstPacket = self.totalPacketCount == 1
@@ -386,24 +449,111 @@ private final class BluetoothOpusPipeline: @unchecked Sendable {
                     generation: requestedGeneration,
                     receivedPackets: self.pendingPacketCount,
                     decodedFrames: self.pendingDecodedFrameCount,
+                    concealedFrames:
+                        self.pendingConcealedFrameCount,
+                    timelineGaps: self.pendingTimelineGapCount,
+                    duplicatePackets:
+                        self.pendingDuplicatePacketCount,
                     level: self.pendingLevel,
                     decodeError: self.pendingDecodeError
                 )
             )
             self.pendingPacketCount = 0
             self.pendingDecodedFrameCount = 0
+            self.pendingConcealedFrameCount = 0
+            self.pendingTimelineGapCount = 0
+            self.pendingDuplicatePacketCount = 0
             self.pendingLevel = 0
             self.pendingDecodeError = nil
             self.lastMetricsEmissionNanoseconds = now
         }
     }
 
+    private func decode(
+        payload: Data?,
+        decoder: OpaquePointer
+    ) -> DecodedFrame {
+        var mono = [Float](
+            repeating: 0,
+            count: DualSenseBluetoothAudioProtocol.microphoneFrameCount
+        )
+        let decodedFrames: Int32
+        if let payload {
+            decodedFrames = payload.withUnsafeBytes { encodedBytes in
+                mono.withUnsafeMutableBufferPointer { pcm in
+                    opus_decode_float(
+                        decoder,
+                        encodedBytes.bindMemory(
+                            to: UInt8.self
+                        ).baseAddress,
+                        Int32(payload.count),
+                        pcm.baseAddress!,
+                        Int32(
+                            DualSenseBluetoothAudioProtocol
+                                .microphoneFrameCount
+                        ),
+                        0
+                    )
+                }
+            }
+        } else {
+            decodedFrames = mono.withUnsafeMutableBufferPointer { pcm in
+                opus_decode_float(
+                    decoder,
+                    nil,
+                    0,
+                    pcm.baseAddress!,
+                    Int32(
+                        DualSenseBluetoothAudioProtocol
+                            .microphoneFrameCount
+                    ),
+                    0
+                )
+            }
+        }
+        guard decodedFrames > 0 else {
+            return DecodedFrame(
+                samples: [],
+                frameCount: 0,
+                error: decodedFrames < 0 ? decodedFrames : nil
+            )
+        }
+        return DecodedFrame(
+            samples: mono,
+            frameCount: Int(decodedFrames),
+            error: nil
+        )
+    }
+
+    private func publish(
+        _ frame: DecodedFrame,
+        pcmHandler: (@Sendable ([Float], Int) -> Void)?
+    ) {
+        ring.write(frame.samples, count: frame.frameCount)
+        pcmHandler?(frame.samples, frame.frameCount)
+    }
+
+    private func level(of frame: DecodedFrame) -> Float {
+        guard frame.frameCount > 0 else { return 0 }
+        var energy: Float = 0
+        for sample in frame.samples.prefix(frame.frameCount) {
+            energy += sample * sample
+        }
+        let rms = sqrt(energy / Float(frame.frameCount))
+        let decibels = 20 * log10(max(rms, 0.000_01))
+        return min(1, max(0, (decibels + 60) / 60))
+    }
+
     private func resetPendingMetrics() {
         pendingPacketCount = 0
         pendingDecodedFrameCount = 0
+        pendingConcealedFrameCount = 0
+        pendingTimelineGapCount = 0
+        pendingDuplicatePacketCount = 0
         pendingLevel = 0
         pendingDecodeError = nil
         totalPacketCount = 0
+        packetTimeline.reset()
         lastMetricsEmissionNanoseconds = 0
     }
 }

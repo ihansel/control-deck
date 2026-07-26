@@ -52,6 +52,8 @@ struct DashboardView: View {
     @ObservedObject private var controller: DualSenseControllerService
     @ObservedObject private var audio: AudioDeviceService
     @ObservedObject private var bluetoothMicrophone: BluetoothMicrophoneService
+    @ObservedObject private var localSpeech:
+        LocalSpeechTranscriptionService
     @ObservedObject private var automation: CodexAutomation
     @ObservedObject private var codexExtension: CodexExtensionService
     @ObservedObject private var shiftLayer: ShiftLayerStore
@@ -69,6 +71,9 @@ struct DashboardView: View {
         _audio = ObservedObject(wrappedValue: model.audio)
         _bluetoothMicrophone = ObservedObject(
             wrappedValue: model.bluetoothMicrophone
+        )
+        _localSpeech = ObservedObject(
+            wrappedValue: model.localSpeechTranscriber
         )
         _automation = ObservedObject(wrappedValue: model.automation)
         _codexExtension = ObservedObject(
@@ -380,6 +385,7 @@ struct DashboardView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                    .disabled(localSpeech.isActive)
                     if profiles.editingProfile.touchpad.oneFingerMode ==
                         .pointer {
                         LabeledSlider(
@@ -1490,6 +1496,9 @@ struct DashboardView: View {
                             Button("Microphone privacy") {
                                 model.openMicrophonePrivacySettings()
                             }
+                            Button("Speech privacy") {
+                                model.openSpeechRecognitionPrivacySettings()
+                            }
                             Button("Open Codex microphone settings") {
                                 model.openCodexMicrophoneSettings()
                             }
@@ -1499,7 +1508,9 @@ struct DashboardView: View {
                             "Choose DualSense Microphone in Codex Settings → " +
                                 "General. ControlDeck keeps this input published " +
                                 "while Bluetooth is connected and does not " +
-                                "change the Mac’s system-default microphone."
+                                "change the Mac’s system-default microphone. " +
+                                "Outside Codex, ControlDeck uses Apple’s local " +
+                                "SpeechTranscriber and inserts into the focused field."
                         )
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1510,6 +1521,223 @@ struct DashboardView: View {
                     }
                     .buttonStyle(.borderedProminent)
                 }
+            }
+
+            GroupBox("Dictation & speech extensions") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(
+                        "Apple Speech is ready immediately. Optional local " +
+                        "speech extensions download only when you choose " +
+                        "them, stay outside the ControlDeck app, and can be " +
+                        "removed here at any time."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                    Picker(
+                        "Transcription engine",
+                        selection: $model.generalDictationEngine
+                    ) {
+                        ForEach(GeneralDictationEngine.allCases) { engine in
+                            Text(engine.label).tag(engine)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Toggle(
+                        "Use the controller microphone when available",
+                        isOn:
+                            $model
+                                .generalDictationUsesControllerMicrophone
+                    )
+                    Text(
+                        model.generalDictationUsesControllerMicrophone
+                            ? "Default · L2 uses the DualSense microphone over USB or Bluetooth."
+                            : "Comparison mode · L2 uses the Mac’s selected input while controller buttons still control dictation."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                    let selectedEngine = model.generalDictationEngine
+                    let selectedState = localSpeech.state(
+                        for: selectedEngine
+                    )
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(
+                            systemName:
+                                model.generalDictationEngine == .appleSpeech
+                                ? "apple.logo"
+                                : "waveform.badge.mic"
+                        )
+                        .font(.title2)
+                        .foregroundStyle(Color.accentColor)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(model.generalDictationEngine.detail)
+                                .font(.callout.weight(.medium))
+                            if selectedEngine != .appleSpeech {
+                                Text(
+                                    localSpeech.status(
+                                        for: selectedEngine
+                                    )
+                                )
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if selectedState == .downloading {
+                                    Group {
+                                        if selectedEngine.isWhisperKit {
+                                            let progress =
+                                                selectedEngine ==
+                                                    .whisperKitSmallEnglish
+                                                ? localSpeech
+                                                    .whisperKitSmallProgress
+                                                : localSpeech
+                                                    .whisperKitProgress
+                                            VStack(
+                                                alignment: .leading,
+                                                spacing: 4
+                                            ) {
+                                                ProgressView(value: progress)
+                                                Text(
+                                                    "\(Int((progress * 100).rounded()))% · approximately \(ByteCountFormatter.string(fromByteCount: selectedEngine.estimatedDownloadBytes, countStyle: .file))"
+                                                )
+                                                .font(
+                                                    .caption2
+                                                        .monospacedDigit()
+                                                )
+                                                .foregroundStyle(.secondary)
+                                            }
+                                        } else {
+                                            ProgressView()
+                                        }
+                                    }
+                                    .frame(maxWidth: 360)
+                                }
+                                if selectedState == .loading {
+                                    HStack(spacing: 8) {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                        Text(
+                                            "Loading and optimizing the model for this Mac…"
+                                        )
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    }
+                                }
+                                if !localSpeech.partialTranscript.isEmpty {
+                                    Text(
+                                        "Live: \(localSpeech.partialTranscript)"
+                                    )
+                                    .font(.caption)
+                                    .lineLimit(2)
+                                }
+                            } else {
+                                Text(
+                                    "Uses Apple’s on-device model and requires " +
+                                    "no ControlDeck model storage."
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        if selectedEngine != .appleSpeech {
+                            VStack(alignment: .trailing, spacing: 6) {
+                                if localSpeech.isReady(selectedEngine) {
+                                    Label(
+                                        "Ready",
+                                        systemImage: "checkmark.circle.fill"
+                                    )
+                                    .foregroundStyle(.green)
+                                } else {
+                                    Button("Download extension") {
+                                        localSpeech.prepareModel(
+                                            selectedEngine
+                                        )
+                                    }
+                                    .disabled(
+                                        selectedState == .downloading ||
+                                            selectedState == .loading
+                                    )
+                                }
+                                if localSpeech.installedBytes(
+                                    for: selectedEngine
+                                ) > 0 {
+                                    Text(
+                                        ByteCountFormatter.string(
+                                            fromByteCount:
+                                                localSpeech.installedBytes(
+                                                    for: selectedEngine
+                                                ),
+                                            countStyle: .file
+                                        )
+                                    )
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                                    Button("Remove model") {
+                                        localSpeech.removeDownloadedModel(
+                                            selectedEngine
+                                        )
+                                    }
+                                    .buttonStyle(.link)
+                                    .disabled(localSpeech.isActive)
+                                }
+                            }
+                        }
+                    }
+
+                    if localSpeech.isActive {
+                        HStack(spacing: 10) {
+                            Text(localSpeech.activeStatus)
+                                .font(.caption.weight(.semibold))
+                            ProgressView(
+                                value: Double(localSpeech.inputLevel)
+                            )
+                            .frame(maxWidth: 220)
+                            Text(
+                                localSpeech.audioDuration,
+                                format: .number.precision(
+                                    .fractionLength(1)
+                                )
+                            )
+                            .font(.caption.monospacedDigit())
+                            Text("seconds")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Text(
+                        "L2 still uses Codex’s native dictation in Codex and " +
+                        "Claude’s native dictation in Claude. This setting " +
+                        "applies to Notes, browsers, editors and other apps. " +
+                        "Live uses Parakeet and automatically retries buffered " +
+                        "audio with a ready WhisperKit model when needed. " +
+                        "Balanced keeps the download compact; High Accuracy is " +
+                        "an optional larger Whisper model. " +
+                        "Downloaded models never receive your audio over a network."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                    HStack(spacing: 16) {
+                        Link(
+                            "Parakeet model & license",
+                            destination: URL(
+                                string:
+                                    "https://huggingface.co/FluidInference/parakeet-realtime-eou-120m-coreml"
+                            )!
+                        )
+                        Link(
+                            "WhisperKit model",
+                            destination: URL(
+                                string:
+                                    "https://huggingface.co/argmaxinc/whisperkit-coreml"
+                            )!
+                        )
+                    }
+                    .font(.caption)
+                }
+                .padding(8)
             }
 
             GroupBox("Supported controllers") {

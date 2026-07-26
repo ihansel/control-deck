@@ -18,18 +18,20 @@
     <string>ControlDeck</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.1.0</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>3</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<false/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>ControlDeck publishes the connected controller microphone for Codex dictation.</string>
+	<string>ControlDeck uses your selected microphone for controller-triggered dictation.</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>ControlDeck privately routes decoded Bluetooth controller audio into a selectable microphone input.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>ControlDeck uses Apple SpeechTranscriber to turn controller-triggered speech into text on this Mac.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 Ian Hansel</string>
 </dict>

@@ -318,6 +318,9 @@ struct ControllerPreferences {
     private enum Key {
         static let soundTheme = "soundTheme.v2"
         static let statusHaptics = "statusHaptics"
+        static let generalDictationEngine = "generalDictationEngine.v1"
+        static let generalDictationUsesControllerMicrophone =
+            "generalDictationUsesControllerMicrophone.v1"
     }
 
     static var soundTheme: SoundTheme {
@@ -340,5 +343,107 @@ struct ControllerPreferences {
             return UserDefaults.standard.bool(forKey: Key.statusHaptics)
         }
         set { UserDefaults.standard.set(newValue, forKey: Key.statusHaptics) }
+    }
+
+    static var generalDictationEngine: GeneralDictationEngine {
+        get {
+            guard let rawValue = UserDefaults.standard.string(
+                forKey: Key.generalDictationEngine
+            ) else {
+                return .appleSpeech
+            }
+            return GeneralDictationEngine(rawValue: rawValue) ?? .appleSpeech
+        }
+        set {
+            UserDefaults.standard.set(
+                newValue.rawValue,
+                forKey: Key.generalDictationEngine
+            )
+        }
+    }
+
+    static var generalDictationUsesControllerMicrophone: Bool {
+        get {
+            if UserDefaults.standard.object(
+                forKey: Key.generalDictationUsesControllerMicrophone
+            ) == nil {
+                return true
+            }
+            return UserDefaults.standard.bool(
+                forKey: Key.generalDictationUsesControllerMicrophone
+            )
+        }
+        set {
+            UserDefaults.standard.set(
+                newValue,
+                forKey: Key.generalDictationUsesControllerMicrophone
+            )
+        }
+    }
+}
+
+enum GeneralDictationEngine: String, CaseIterable, Hashable, Identifiable {
+    case appleSpeech
+    case parakeetEOU120M
+    case whisperKitBaseEnglish
+    case whisperKitSmallEnglish
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .appleSpeech:
+            "System"
+        case .parakeetEOU120M:
+            "Live"
+        case .whisperKitBaseEnglish:
+            "Balanced"
+        case .whisperKitSmallEnglish:
+            "High Accuracy"
+        }
+    }
+
+    var engineName: String {
+        switch self {
+        case .appleSpeech:
+            "Apple SpeechTranscriber"
+        case .parakeetEOU120M:
+            "Parakeet EOU 120M"
+        case .whisperKitBaseEnglish:
+            "WhisperKit Base English"
+        case .whisperKitSmallEnglish:
+            "WhisperKit Small English"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .appleSpeech:
+            "Apple SpeechTranscriber · built into macOS 26"
+        case .parakeetEOU120M:
+            "Parakeet EOU · live local text with automatic fallback"
+        case .whisperKitBaseEnglish:
+            "WhisperKit Base English · compact local transcription"
+        case .whisperKitSmallEnglish:
+            "WhisperKit Small English · optional higher-accuracy model"
+        }
+    }
+
+    var isWhisperKit: Bool {
+        self == .whisperKitBaseEnglish ||
+            self == .whisperKitSmallEnglish
+    }
+
+    var estimatedDownloadBytes: Int64 {
+        switch self {
+        case .appleSpeech:
+            0
+        case .parakeetEOU120M:
+            224_000_000
+        case .whisperKitBaseEnglish:
+            149_000_000
+        case .whisperKitSmallEnglish:
+            487_000_000
+        }
     }
 }

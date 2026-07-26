@@ -34,6 +34,16 @@ struct ControlDeckLogicTestRunner {
             "Codex Cross left-clicks"
         )
         expect(
+            GeneralDictationEngine.allCases.map(\.label) == [
+                "System",
+                "Live",
+                "Balanced",
+                "High Accuracy"
+            ] &&
+                GeneralDictationEngine.whisperKitSmallEnglish.isWhisperKit,
+            "dictation modes expose system, live, balanced and high-accuracy choices"
+        )
+        expect(
             ControllerProfile.codex.action(for: .l2) == .codexDictation,
             "Codex L2 dictates"
         )
@@ -1017,6 +1027,73 @@ struct ControlDeckLogicTestRunner {
                 bytes: audioReport
             ) == Data(opusFrame),
             "Bluetooth audio frame extraction"
+        )
+        var sequencedAudioReport = audioReport
+        sequencedAudioReport[1] = 0xa2
+        let sequencedPacket =
+            DualSenseBluetoothAudioProtocol.microphonePacket(
+                reportID: 0x31,
+                bytes: sequencedAudioReport,
+                arrivalNanoseconds: 123_000_000
+            )
+        expect(
+            sequencedPacket ==
+                DualSenseBluetoothMicrophonePacket(
+                    sequence: 0x0a,
+                    opusPayload: Data(opusFrame),
+                    arrivalNanoseconds: 123_000_000
+                ),
+            "Bluetooth audio preserves packet sequence and arrival clock"
+        )
+        var packetTimeline = DualSenseBluetoothPacketTimeline()
+        let timelinePayload = Data(opusFrame)
+        expect(
+            packetTimeline.observe(
+                DualSenseBluetoothMicrophonePacket(
+                    sequence: 0,
+                    opusPayload: timelinePayload,
+                    arrivalNanoseconds: 0
+                )
+            ) == DualSenseBluetoothPacketTiming(
+                concealCount: 0,
+                timelineGaps: 0,
+                isDuplicate: false
+            ),
+            "Bluetooth packet timeline accepts its first frame"
+        )
+        expect(
+            packetTimeline.observe(
+                DualSenseBluetoothMicrophonePacket(
+                    sequence: 1,
+                    opusPayload: timelinePayload,
+                    arrivalNanoseconds: 10_000_000
+                )
+            ).concealCount == 0,
+            "Bluetooth packet timeline keeps continuous audio untouched"
+        )
+        expect(
+            packetTimeline.observe(
+                DualSenseBluetoothMicrophonePacket(
+                    sequence: 3,
+                    opusPayload: timelinePayload,
+                    arrivalNanoseconds: 30_000_000
+                )
+            ) == DualSenseBluetoothPacketTiming(
+                concealCount: 1,
+                timelineGaps: 1,
+                isDuplicate: false
+            ),
+            "Bluetooth packet timeline identifies corroborated packet loss"
+        )
+        expect(
+            packetTimeline.observe(
+                DualSenseBluetoothMicrophonePacket(
+                    sequence: 3,
+                    opusPayload: timelinePayload,
+                    arrivalNanoseconds: 31_000_000
+                )
+            ).isDuplicate,
+            "Bluetooth packet timeline rejects immediate duplicates"
         )
         expect(
             DualSenseBluetoothAudioProtocol.microphoneOpusPayload(

@@ -63,3 +63,106 @@ if grep -Eq \
 fi
 
 echo "PASS: Codex customization security boundaries"
+
+CONTROLLER_SERVICE="$ROOT/Sources/ControlDeck/DualSenseControllerService.swift"
+SPEECH_SERVICE="$ROOT/Sources/ControlDeck/AppleSpeechTranscriptionService.swift"
+BUILD_APP="$ROOT/scripts/build-app.sh"
+BUILD_AND_RUN="$ROOT/script/build_and_run.sh"
+PACKAGE_RELEASE="$ROOT/scripts/package-notarized-release.sh"
+APP_ENTITLEMENTS="$ROOT/Resources/ControlDeck.entitlements"
+MODEL_BUNDLE_GUARD="$ROOT/scripts/verify-no-bundled-speech-models.sh"
+
+if grep -Eq 'preferredSystemGestureState[[:space:]]*=[[:space:]]*[.]alwaysReceive' \
+  "$CONTROLLER_SERVICE" ||
+  ! grep -Eq 'preferredSystemGestureState[[:space:]]*=[[:space:]]*[.]disabled' \
+    "$CONTROLLER_SERVICE"
+then
+  print -u2 "FAIL: mapped controller buttons can still trigger macOS game gestures"
+  exit 1
+fi
+
+if ! grep -q 'AVAudioApplication.shared.recordPermission' "$SPEECH_SERVICE" ||
+  grep -q 'AVCaptureDevice.authorizationStatus(for: .audio)' "$SPEECH_SERVICE"
+then
+  print -u2 "FAIL: dictation is not using the AVAudioEngine microphone permission path"
+  exit 1
+fi
+
+echo "PASS: controller gesture ownership and microphone permission path"
+
+if ! grep -q 'com.apple.security.device.audio-input' "$APP_ENTITLEMENTS" ||
+  ! grep -q -- '--entitlements "$APP_ENTITLEMENTS"' "$BUILD_APP" ||
+  ! grep -q -- '--entitlements "$APP_ENTITLEMENTS"' "$PACKAGE_RELEASE"
+then
+  print -u2 "FAIL: a ControlDeck signing path can strip microphone access"
+  exit 1
+fi
+
+if grep -Eq \
+  'security[[:space:]]+find-identity|DEVELOPER_ID_APPLICATION' \
+  "$BUILD_APP" ||
+  ! grep -q 'CONTROLDECK_DEVELOPMENT_SIGNING_IDENTITY' "$BUILD_APP" ||
+  ! grep -q 'development-signing-identity' "$BUILD_APP" ||
+  ! grep -q 'build-app.sh" --development' "$BUILD_AND_RUN"
+then
+  print -u2 "FAIL: development signing is not explicit and local-only"
+  exit 1
+fi
+
+if ! grep -q -- '--sign "$DEVELOPER_ID_APPLICATION"' "$PACKAGE_RELEASE" ||
+  ! grep -q 'notarytool submit' "$PACKAGE_RELEASE"
+then
+  print -u2 "FAIL: Developer ID signing is not confined to the release path"
+  exit 1
+fi
+
+if [[ ! -x "$MODEL_BUNDLE_GUARD" ]] ||
+  ! grep -q 'verify-no-bundled-speech-models.sh' "$BUILD_APP" ||
+  ! grep -q 'verify-no-bundled-speech-models.sh' "$PACKAGE_RELEASE"
+then
+  print -u2 "FAIL: speech model weights can enter a release bundle"
+  exit 1
+fi
+
+if ! grep -q 'for element in gamepad.allElements' "$CONTROLLER_SERVICE"
+then
+  print -u2 "FAIL: analogue controller elements can still trigger system gestures"
+  exit 1
+fi
+
+echo "PASS: development/release signing split and full gesture ownership"
+
+LOCAL_SPEECH="$ROOT/Sources/ControlDeck/LocalSpeechTranscriptionService.swift"
+SPEECH_PIPELINE="$ROOT/Sources/ControlDeck/SpeechAudioPipeline.swift"
+APPLE_BUFFER_FALLBACK="$ROOT/Sources/ControlDeck/AppleSpeechBufferTranscriber.swift"
+PACKAGE_MANIFEST="$ROOT/Package.swift"
+
+if grep -REqi --exclude-dir=.build --exclude-dir=.git \
+  'import Moonshine|moonshine-swift|MoonshineTranscriptionService|MoonshineSmoke' \
+  "$ROOT/Sources" "$ROOT/Package.swift" "$ROOT/Tools"
+then
+  print -u2 "FAIL: retired Moonshine code is still part of the app"
+  exit 1
+fi
+
+if ! grep -q 'FluidInference/FluidAudio.git' "$PACKAGE_MANIFEST" ||
+  ! grep -q 'argmaxinc/argmax-oss-swift.git' "$PACKAGE_MANIFEST" ||
+  ! grep -q 'StreamingEouAsrManager' "$LOCAL_SPEECH" ||
+  ! grep -q 'WhisperKitConfig' "$LOCAL_SPEECH" ||
+  ! grep -q 'drainAudioPump' "$LOCAL_SPEECH" ||
+  ! grep -q 'ContinuousSpeechAudioProcessor' "$SPEECH_PIPELINE" ||
+  ! grep -q 'recognitionSamples' "$SPEECH_PIPELINE" ||
+  ! grep -q 'trailingPadding: 1.1' "$LOCAL_SPEECH" ||
+  ! grep -q 'convertToMonoSamples' "$LOCAL_SPEECH" ||
+  ! grep -q 'parakeetFeedFrames' "$LOCAL_SPEECH" ||
+  ! grep -q 'transcribeWithAppleFallback' "$LOCAL_SPEECH" ||
+  ! grep -q 'AnalysisContext' "$APPLE_BUFFER_FALLBACK" ||
+  ! grep -q 'DualSenseBluetoothPacketTimeline' "$CONTROLLER_SERVICE" \
+      "$ROOT/Sources/ControlDeck/DualSenseBluetoothAudioProtocol.swift" \
+      "$ROOT/Sources/ControlDeck/BluetoothMicrophoneService.swift"
+then
+  print -u2 "FAIL: continuous transcription, fallback or model integration is missing"
+  exit 1
+fi
+
+echo "PASS: continuous Parakeet, WhisperKit and Apple fallback integration"

@@ -2,6 +2,28 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD_KIND="${1:-universal}"
+case "$BUILD_KIND" in
+  --development|development)
+    BUILD_KIND="development"
+    ;;
+  --universal|universal)
+    BUILD_KIND="universal"
+    ;;
+  *)
+    print -u2 "usage: $0 [--development|--universal]"
+    exit 2
+    ;;
+esac
+
+# Prefer the complete, internally matched Xcode toolchain when it is present.
+# A partially updated CommandLineTools SDK/compiler pair can otherwise make an
+# unattended reload fail before compilation begins.
+if [[ -z "${DEVELOPER_DIR:-}" &&
+      -d "/Applications/Xcode.app/Contents/Developer" ]]; then
+  export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+fi
+SWIFT=(xcrun swift)
 BINARY=""
 RESOURCE_BUNDLE=""
 ARM64_TRIPLE="arm64-apple-macosx14.0"
@@ -12,6 +34,16 @@ UNIVERSAL_OUTPUT="$ROOT/.build/release-universal/control-deck"
 OPUS_PREFIX="$("$ROOT/scripts/build-opus.sh" --print-prefix)"
 OPUS_DYLIB="$OPUS_PREFIX/lib/libopus.0.dylib"
 OPUS_DEPLOYMENT_TARGET="14.0"
+APP_ENTITLEMENTS="$ROOT/Resources/ControlDeck.entitlements"
+DEVELOPMENT_SIGNING_IDENTITY_FILE="${CONTROLDECK_DEVELOPMENT_SIGNING_IDENTITY_FILE:-$ROOT/.codex/development-signing-identity}"
+DEVELOPMENT_SIGNING_IDENTITY="${CONTROLDECK_DEVELOPMENT_SIGNING_IDENTITY:-}"
+
+if [[ "$BUILD_KIND" == "development" &&
+      -z "$DEVELOPMENT_SIGNING_IDENTITY" &&
+      -r "$DEVELOPMENT_SIGNING_IDENTITY_FILE" ]]; then
+  IFS= read -r DEVELOPMENT_SIGNING_IDENTITY \
+    < "$DEVELOPMENT_SIGNING_IDENTITY_FILE"
+fi
 
 minimum_macos_version() {
   local binary="$1"
@@ -47,6 +79,16 @@ verify_universal_executable() {
   done
 }
 
+verify_development_executable() {
+  local binary="$1"
+  local architecture
+  architecture="$(uname -m)"
+
+  lipo "$binary" -verify_arch "$architecture"
+  [[ "$(minimum_macos_version "$binary" "$architecture")" == \
+    "$OPUS_DEPLOYMENT_TARGET" ]]
+}
+
 package_app() {
   local app_name="$1"
   local plist="$2"
@@ -58,6 +100,18 @@ package_app() {
   local frameworks="$contents/Frameworks"
   local resources="$contents/Resources"
   local licenses="$resources/ThirdPartyLicenses"
+  local signing_identity="-"
+  local signing_options=()
+  local signing_requirements=(
+    --requirements "=designated => identifier \"$bundle_id\""
+  )
+
+  if [[ "$BUILD_KIND" == "development" &&
+        -n "$DEVELOPMENT_SIGNING_IDENTITY" ]]; then
+    signing_identity="$DEVELOPMENT_SIGNING_IDENTITY"
+    signing_options=(--options runtime)
+    signing_requirements=()
+  fi
 
   rm -rf "$app"
   mkdir -p "$macos" "$frameworks" "$resources" "$licenses"
@@ -66,6 +120,18 @@ package_app() {
   cp \
     "$ROOT/Resources/ThirdPartyLicenses/Opus-COPYING.txt" \
     "$licenses/Opus-COPYING.txt"
+  cp \
+    "$ROOT/.build/checkouts/FluidAudio/LICENSE" \
+    "$licenses/FluidAudio-Apache-2.0.txt"
+  cp \
+    "$ROOT/.build/checkouts/argmax-oss-swift/LICENSE" \
+    "$licenses/WhisperKit-MIT.txt"
+  cp \
+    "$ROOT/.build/checkouts/argmax-oss-swift/NOTICES" \
+    "$licenses/WhisperKit-NOTICES.txt"
+  cp \
+    "$ROOT/Resources/ThirdPartyLicenses/Parakeet-MODEL-NOTICE.txt" \
+    "$licenses/Parakeet-MODEL-NOTICE.txt"
   cp "$plist" "$contents/Info.plist"
   if [[ -n "$icon" ]]; then
     cp "$icon" "$resources/$(basename "$icon")"
@@ -83,52 +149,89 @@ package_app() {
   install_name_tool \
     -id "@rpath/libopus.0.dylib" \
     "$frameworks/libopus.0.dylib"
-  codesign --force --sign - "$frameworks/libopus.0.dylib"
+  # Development signing is explicit and local-only. A configured stable
+  # identity keeps macOS TCC permissions attached across reloads; contributors
+  # without one still get an ad-hoc runnable bundle. The release script remains
+  # the only path that discovers release credentials, timestamps, notarizes,
+  # staples, or publishes an artifact.
   codesign \
     --force \
-    --sign - \
-    --requirements "=designated => identifier \"$bundle_id\"" \
+    "${signing_options[@]}" \
+    --sign "$signing_identity" \
+    "$frameworks/libopus.0.dylib"
+  codesign \
+    --force \
+    "${signing_options[@]}" \
+    --sign "$signing_identity" \
+    --entitlements "$APP_ENTITLEMENTS" \
+    "${signing_requirements[@]}" \
     "$app"
   verify_bundled_opus "$frameworks/libopus.0.dylib"
+  "$ROOT/scripts/verify-no-bundled-speech-models.sh" "$app"
   codesign --verify --deep --strict "$app"
-  verify_universal_executable "$macos/control-deck"
+  codesign -d --entitlements - "$app" 2>/dev/null |
+    grep -q 'com.apple.security.device.audio-input'
+  if [[ "$BUILD_KIND" == "universal" ]]; then
+    verify_universal_executable "$macos/control-deck"
+  else
+    verify_development_executable "$macos/control-deck"
+  fi
   echo "$app"
 }
 
 cd "$ROOT"
 "$ROOT/scripts/build-opus.sh"
 export PKG_CONFIG_PATH="$OPUS_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-swift build \
-  -c release \
-  --triple "$ARM64_TRIPLE" \
-  --scratch-path "$ARM64_SCRATCH"
-swift build \
-  -c release \
-  --triple "$X86_64_TRIPLE" \
-  --scratch-path "$X86_64_SCRATCH"
-ARM64_BINARY_DIR="$(
-  swift build \
+if [[ "$BUILD_KIND" == "development" ]]; then
+  "${SWIFT[@]}" build \
+    -c debug \
+    --product control-deck
+  DEVELOPMENT_BINARY_DIR="$(
+    "${SWIFT[@]}" build \
+      -c debug \
+      --product control-deck \
+      --show-bin-path
+  )"
+  BINARY="$DEVELOPMENT_BINARY_DIR/control-deck"
+  RESOURCE_BUNDLE="$DEVELOPMENT_BINARY_DIR/ControlDeck_ControlDeck.bundle"
+  verify_development_executable "$BINARY"
+else
+  "${SWIFT[@]}" build \
     -c release \
+    --product control-deck \
     --triple "$ARM64_TRIPLE" \
-    --scratch-path "$ARM64_SCRATCH" \
-    --show-bin-path
-)"
-X86_64_BINARY_DIR="$(
-  swift build \
+    --scratch-path "$ARM64_SCRATCH"
+  "${SWIFT[@]}" build \
     -c release \
+    --product control-deck \
     --triple "$X86_64_TRIPLE" \
-    --scratch-path "$X86_64_SCRATCH" \
-    --show-bin-path
-)"
-mkdir -p "$(dirname "$UNIVERSAL_OUTPUT")"
-lipo \
-  -create \
-  "$ARM64_BINARY_DIR/control-deck" \
-  "$X86_64_BINARY_DIR/control-deck" \
-  -output "$UNIVERSAL_OUTPUT"
-BINARY="$UNIVERSAL_OUTPUT"
-RESOURCE_BUNDLE="$ARM64_BINARY_DIR/ControlDeck_ControlDeck.bundle"
-verify_universal_executable "$BINARY"
+    --scratch-path "$X86_64_SCRATCH"
+  ARM64_BINARY_DIR="$(
+    "${SWIFT[@]}" build \
+      -c release \
+      --product control-deck \
+      --triple "$ARM64_TRIPLE" \
+      --scratch-path "$ARM64_SCRATCH" \
+      --show-bin-path
+  )"
+  X86_64_BINARY_DIR="$(
+    "${SWIFT[@]}" build \
+      -c release \
+      --product control-deck \
+      --triple "$X86_64_TRIPLE" \
+      --scratch-path "$X86_64_SCRATCH" \
+      --show-bin-path
+  )"
+  mkdir -p "$(dirname "$UNIVERSAL_OUTPUT")"
+  lipo \
+    -create \
+    "$ARM64_BINARY_DIR/control-deck" \
+    "$X86_64_BINARY_DIR/control-deck" \
+    -output "$UNIVERSAL_OUTPUT"
+  BINARY="$UNIVERSAL_OUTPUT"
+  RESOURCE_BUNDLE="$ARM64_BINARY_DIR/ControlDeck_ControlDeck.bundle"
+  verify_universal_executable "$BINARY"
+fi
 mkdir -p "$ROOT/dist"
 
 package_app \

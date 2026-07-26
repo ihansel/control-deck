@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 : "${DEVELOPER_ID_APPLICATION:?Set DEVELOPER_ID_APPLICATION to an installed Developer ID Application identity}"
 : "${NOTARYTOOL_PROFILE:?Set NOTARYTOOL_PROFILE to an xcrun notarytool keychain profile}"
 WORK_DIR="$(mktemp -d -t control-deck-release)"
+APP_ENTITLEMENTS="$ROOT/Resources/ControlDeck.entitlements"
 
 cleanup() {
   if mount | grep -Fq "on /Volumes/ControlDeck Installer "; then
@@ -35,6 +36,14 @@ package_and_notarize() {
   local mount_point="$WORK_DIR/dmg-mount"
   local zip="$WORK_DIR/$app_name.zip"
 
+  if ! lipo "$app/Contents/MacOS/control-deck" \
+    -verify_arch arm64 x86_64; then
+    print -u2 \
+      "Refusing to package a development-only build; rebuild the universal app first."
+    return 1
+  fi
+  "$ROOT/scripts/verify-no-bundled-speech-models.sh" "$app"
+
   codesign \
     --force \
     --timestamp \
@@ -45,9 +54,12 @@ package_and_notarize() {
     --force \
     --timestamp \
     --options runtime \
+    --entitlements "$APP_ENTITLEMENTS" \
     --sign "$DEVELOPER_ID_APPLICATION" \
     "$app"
   codesign --verify --deep --strict --verbose=2 "$app"
+  codesign -d --entitlements - "$app" 2>/dev/null |
+    grep -q 'com.apple.security.device.audio-input'
 
   ditto -c -k --sequesterRsrc --keepParent "$app" "$app_submission"
   xcrun notarytool submit \

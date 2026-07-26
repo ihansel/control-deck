@@ -6,8 +6,53 @@ final class HUDController {
     private var hideWorkItem: DispatchWorkItem?
 
     func show(_ message: String, detail: String? = nil, color: NSColor) {
-        hideWorkItem?.cancel()
+        present(
+            message,
+            detail: detail,
+            color: color,
+            autoHideAfter: 1.45
+        )
+    }
 
+    func showStreaming(
+        _ message: String,
+        detail: String? = nil,
+        color: NSColor
+    ) {
+        present(
+            message,
+            detail: detail,
+            color: color,
+            autoHideAfter: nil
+        )
+    }
+
+    func dismiss() {
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
+        panel?.orderOut(nil)
+    }
+
+    func updateInputLevel(_ level: Float) {
+        guard let content = panel?.contentView,
+              let meter = content.subviews.first(where: {
+                  $0.identifier ==
+                      NSUserInterfaceItemIdentifier("input-meter")
+              }),
+              let fill = meter.subviews.first
+        else { return }
+        let clamped = CGFloat(min(1, max(0, level)))
+        fill.frame.size.width = meter.bounds.width * clamped
+    }
+
+    private func present(
+        _ message: String,
+        detail: String?,
+        color: NSColor,
+        autoHideAfter: TimeInterval?
+    ) {
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
         let panel = panel ?? makePanel()
         self.panel = panel
         guard let content = panel.contentView,
@@ -30,6 +75,7 @@ final class HUDController {
             panel.animator().alphaValue = 1
         }
 
+        guard let autoHideAfter else { return }
         let workItem = DispatchWorkItem { [weak self, weak panel] in
             guard let self, let panel else { return }
             NSAnimationContext.runAnimationGroup({ context in
@@ -41,12 +87,15 @@ final class HUDController {
             self.hideWorkItem = nil
         }
         hideWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.45, execute: workItem)
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + autoHideAfter,
+            execute: workItem
+        )
     }
 
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 330, height: 78),
+            contentRect: NSRect(x: 0, y: 0, width: 330, height: 86),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -66,7 +115,7 @@ final class HUDController {
         effect.layer?.cornerRadius = 16
         effect.layer?.masksToBounds = true
 
-        let dot = NSView(frame: NSRect(x: 20, y: 29, width: 20, height: 20))
+        let dot = NSView(frame: NSRect(x: 20, y: 33, width: 20, height: 20))
         dot.identifier = NSUserInterfaceItemIdentifier("state-dot")
         dot.wantsLayer = true
         dot.layer?.cornerRadius = 10
@@ -74,18 +123,35 @@ final class HUDController {
 
         let title = NSTextField(labelWithString: "")
         title.tag = 100
-        title.frame = NSRect(x: 54, y: 38, width: 254, height: 22)
+        title.frame = NSRect(x: 54, y: 46, width: 254, height: 22)
         title.font = .systemFont(ofSize: 15, weight: .semibold)
         title.textColor = .labelColor
         effect.addSubview(title)
 
         let subtitle = NSTextField(labelWithString: "")
         subtitle.tag = 101
-        subtitle.frame = NSRect(x: 54, y: 17, width: 254, height: 18)
+        subtitle.frame = NSRect(x: 54, y: 25, width: 254, height: 18)
         subtitle.font = .systemFont(ofSize: 11.5, weight: .medium)
         subtitle.textColor = .secondaryLabelColor
         subtitle.lineBreakMode = .byTruncatingTail
         effect.addSubview(subtitle)
+
+        let meter = NSView(
+            frame: NSRect(x: 54, y: 14, width: 254, height: 4)
+        )
+        meter.identifier = NSUserInterfaceItemIdentifier("input-meter")
+        meter.wantsLayer = true
+        meter.layer?.backgroundColor =
+            NSColor.secondaryLabelColor.withAlphaComponent(0.18).cgColor
+        meter.layer?.cornerRadius = 2
+        let fill = NSView(
+            frame: NSRect(x: 0, y: 0, width: 0, height: 4)
+        )
+        fill.wantsLayer = true
+        fill.layer?.backgroundColor = NSColor.systemGreen.cgColor
+        fill.layer?.cornerRadius = 2
+        meter.addSubview(fill)
+        effect.addSubview(meter)
 
         panel.contentView = effect
         return panel

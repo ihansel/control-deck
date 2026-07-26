@@ -159,7 +159,12 @@ report ID and therefore deliver 77 bytes to the application.
 
 IOHID callbacks can include the report ID at byte zero or provide it separately.
 The parser accepts both layouts, taking the Opus payload at offset 3 or 2
-respectively. Once an audio payload is recognized it returns immediately;
+respectively. It also retains the high-nibble packet sequence and monotonic
+arrival time. The decoder uses those together to identify duplicates and
+corroborated missing frames. A missing frame is reconstructed with Opus packet
+loss concealment; an arrival-clock gap that is not supported by the sequence is
+reported for diagnostics but does not invent audio. Once an audio payload is
+recognized it returns immediately;
 encoded Opus bytes must never fall through to the controller-state parser,
 where they could otherwise look like random button or pointer events.
 Game Controller callbacks are also suppressed at their entry while capture is

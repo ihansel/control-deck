@@ -6,7 +6,8 @@ final class DualSenseHIDService {
     var onMicrophoneButton: (() -> Void)?
     var onRawButtonChanged: ((ControllerInput, Bool) -> Void)?
     var onBluetoothControlReport: ((Float) -> Void)?
-    var onBluetoothMicrophonePacket: ((Data) -> Void)?
+    var onBluetoothMicrophonePacket:
+        ((DualSenseBluetoothMicrophonePacket) -> Void)?
     var onBluetoothSpeakerResult: ((String) -> Void)?
     var onTransportChanged: ((ControllerTransport) -> Void)?
 
@@ -330,17 +331,18 @@ final class DualSenseHIDService {
                 count: Int(length)
             )
         )
-        if let opus = DualSenseBluetoothAudioProtocol.microphoneOpusPayload(
-            reportID: reportID,
-            bytes: bytes
-        ) {
+        if let microphonePacket =
+            DualSenseBluetoothAudioProtocol.microphonePacket(
+                reportID: reportID,
+                bytes: bytes
+            ) {
             // Audio reuses report 0x31. It must never fall through to the
             // controller-state parser or random Opus bytes become button input.
             receivedAudioPacketCount += 1
             if receivedAudioPacketCount == 1 {
                 logger.notice("Received first Bluetooth microphone packet")
             }
-            onBluetoothMicrophonePacket?(opus)
+            onBluetoothMicrophonePacket?(microphonePacket)
             return
         }
 

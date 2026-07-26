@@ -678,6 +678,44 @@ final class CodexAutomation: ObservableObject {
         return true
     }
 
+    /// Uses Claude's own voice control when the desktop/web surface exposes
+    /// one. Claude currently keeps its native Quick Entry dictation behind
+    /// app-managed UI, so callers should retain a local transcription fallback.
+    @discardableResult
+    func startClaudeDictation() -> Bool {
+        guard frontmostBundleIdentifier == "com.anthropic.claudefordesktop" ||
+                frontmostBundleIdentifier == "com.anthropic.Claude"
+        else {
+            lastResult = "Claude is not the foreground application"
+            return false
+        }
+        return semanticInFrontmostApp(
+            exact: [
+                "Start dictation",
+                "Start voice input",
+                "Voice input",
+                "Dictate"
+            ]
+        )
+    }
+
+    @discardableResult
+    func stopClaudeDictation() -> Bool {
+        guard frontmostBundleIdentifier == "com.anthropic.claudefordesktop" ||
+                frontmostBundleIdentifier == "com.anthropic.Claude"
+        else {
+            lastResult = "Claude is not the foreground application"
+            return false
+        }
+        return semanticInFrontmostApp(
+            exact: [
+                "Stop dictation",
+                "Stop voice input",
+                "Stop recording"
+            ]
+        )
+    }
+
     private func postAppSwitcherTab(reverse: Bool) -> Bool {
         let flags: CGEventFlags = reverse
             ? [.maskCommand, .maskShift]

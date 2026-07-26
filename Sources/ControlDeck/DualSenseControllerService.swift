@@ -18,7 +18,8 @@ final class DualSenseControllerService: ObservableObject {
     var isCharging: Bool { batteryState == "Charging" }
 
     var onEvent: ((ControllerEvent) -> Void)?
-    var onBluetoothMicrophonePacket: ((Data) -> Void)?
+    var onBluetoothMicrophonePacket:
+        ((DualSenseBluetoothMicrophonePacket) -> Void)?
     var onBluetoothMicrophoneRecoveryRequired: ((String) -> Void)?
     var onTransportChanged: ((ControllerTransport) -> Void)?
 
@@ -366,6 +367,13 @@ final class DualSenseControllerService: ObservableObject {
     }
 
     private func configure(_ gamepad: GCExtendedGamepad) {
+        // ControlDeck is the active input owner, not a game. Disable every
+        // system gesture exposed by the physical profile, including analogue
+        // triggers such as L2/R2, so macOS Games cannot act on the same input.
+        for element in gamepad.allElements {
+            element.preferredSystemGestureState = .disabled
+        }
+
         bind(gamepad.buttonA, name: "Cross", input: .cross)
         bind(gamepad.buttonB, name: "Circle", input: .circle)
         bind(gamepad.buttonX, name: "Square", input: .square)
@@ -492,7 +500,11 @@ final class DualSenseControllerService: ObservableObject {
         name: String,
         input: ControllerInput
     ) {
-        button.preferredSystemGestureState = .alwaysReceive
+        // `alwaysReceive` lets the app and macOS act on the same press. On the
+        // PS/Home button that can launch Apple Games while ControlDeck is also
+        // focusing Codex. ControlDeck is a background input utility, so take
+        // full ownership of mapped buttons while it is running.
+        button.preferredSystemGestureState = .disabled
         let inputGate = microphoneInputGate
         button.valueChangedHandler = { [weak self, inputGate] _, _, pressed in
             guard inputGate.acceptsGameControllerInput else { return }

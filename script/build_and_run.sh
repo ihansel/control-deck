@@ -9,7 +9,7 @@ PROCESS="control-deck"
 BUNDLE_ID="com.ianhansel.controldeck"
 
 pkill -x "$PROCESS" >/dev/null 2>&1 || true
-"$ROOT/scripts/build-app.sh" >/dev/null
+"$ROOT/scripts/build-app.sh" --development >/dev/null
 
 launch_app() {
   /usr/bin/open -n "$APP"
