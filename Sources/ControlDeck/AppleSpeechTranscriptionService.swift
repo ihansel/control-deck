@@ -2,7 +2,6 @@ import ApplicationServices
 import AppKit
 import AudioToolbox
 @preconcurrency import AVFoundation
-import Carbon.HIToolbox
 import Foundation
 import OSLog
 import Speech
@@ -41,7 +40,7 @@ enum AppleSpeechTranscriptionError: LocalizedError, Equatable {
         case .speechPermissionDenied:
             "Speech Recognition permission is required for Apple transcription"
         case .noTextField:
-            "Focus a text field before starting dictation"
+            "Focus the app where dictated text should be inserted"
         case .unsupportedLocale:
             "Apple SpeechTranscriber does not support the current language"
         case .modelUnavailable:
@@ -85,6 +84,7 @@ final class AppleSpeechTranscriptionService {
     func begin(
         inputDeviceID: AudioObjectID?,
         externalPCMSampleRate: Double? = nil,
+        target: SpeechTextInsertionTarget? = nil,
         contextualStrings: [String] = [],
         completion: @escaping (
             Result<Void, AppleSpeechTranscriptionError>
@@ -111,7 +111,10 @@ final class AppleSpeechTranscriptionService {
             }
         )
         storage = session
-        return session.begin(inputDeviceID: inputDeviceID) {
+        return session.begin(
+            inputDeviceID: inputDeviceID,
+            target: target
+        ) {
             [weak self] result in
             if case .failure = result {
                 self?.storage = nil
@@ -177,8 +180,7 @@ private final class AppleSpeechTranscriptionSession {
 
     private var phase: Phase = .idle
     private var generation = 0
-    private var targetApplication: NSRunningApplication?
-    private var targetElement: AXUIElement?
+    private var target: SpeechTextInsertionTarget?
     private var engine: AVAudioEngine?
     private let externalPCMInput: AppleSpeechPCMInput?
     private let logger = Logger(
@@ -235,6 +237,7 @@ private final class AppleSpeechTranscriptionSession {
     @discardableResult
     func begin(
         inputDeviceID: AudioObjectID?,
+        target: SpeechTextInsertionTarget?,
         completion: @escaping (
             Result<Void, AppleSpeechTranscriptionError>
         ) -> Void
@@ -247,10 +250,7 @@ private final class AppleSpeechTranscriptionSession {
             completion(.failure(.accessibilityRequired))
             return false
         }
-        guard let application = NSWorkspace.shared.frontmostApplication,
-              let focused = focusedUIElement(),
-              isTextInput(focused)
-        else {
+        guard let target = target ?? SpeechTextInsertionTarget.capture() else {
             completion(.failure(.noTextField))
             return false
         }
@@ -258,8 +258,7 @@ private final class AppleSpeechTranscriptionSession {
         generation += 1
         let session = generation
         phase = .preparing
-        targetApplication = application
-        targetElement = focused
+        self.target = target
         transcript = ""
         pendingFinish = nil
 
@@ -355,7 +354,7 @@ private final class AppleSpeechTranscriptionSession {
                         completion(.failure(.noSpeechDetected))
                         return
                     }
-                    guard let method = self.insert(text) else {
+                    guard let method = self.target?.insert(text) else {
                         self.reset()
                         completion(.failure(.targetUnavailable))
                         return
@@ -643,156 +642,11 @@ private final class AppleSpeechTranscriptionSession {
         }
     }
 
-    private func insert(
-        _ text: String
-    ) -> AppleSpeechTranscriptionResult.InsertionMethod? {
-        guard let target = currentTargetElement() else { return nil }
-        if replaceSelection(in: target, with: text) {
-            return .accessibility
-        }
-        guard paste(text) else { return nil }
-        return .pasteboard
-    }
-
-    private func replaceSelection(
-        in element: AXUIElement,
-        with text: String
-    ) -> Bool {
-        var settable = DarwinBoolean(false)
-        guard AXUIElementIsAttributeSettable(
-            element,
-            kAXSelectedTextAttribute as CFString,
-            &settable
-        ) == .success,
-        settable.boolValue
-        else { return false }
-        return AXUIElementSetAttributeValue(
-            element,
-            kAXSelectedTextAttribute as CFString,
-            text as CFString
-        ) == .success
-    }
-
-    private func paste(_ text: String) -> Bool {
-        let pasteboard = NSPasteboard.general
-        let snapshot = snapshotPasteboard(pasteboard)
-        pasteboard.clearContents()
-        guard pasteboard.setString(text, forType: .string),
-              postKey(kVK_ANSI_V, flags: .maskCommand)
-        else {
-            restorePasteboard(pasteboard, snapshot: snapshot)
-            return false
-        }
-        let speechChangeCount = pasteboard.changeCount
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            if pasteboard.changeCount == speechChangeCount {
-                self.restorePasteboard(pasteboard, snapshot: snapshot)
-            }
-        }
-        return true
-    }
-
-    private func currentTargetElement() -> AXUIElement? {
-        if let focused = focusedUIElement(),
-           isTextInput(focused),
-           pid(of: focused) == targetApplication?.processIdentifier {
-            targetElement = focused
-            return focused
-        }
-        guard let targetApplication, let targetElement else { return nil }
-        _ = targetApplication.activate(options: [.activateAllWindows])
-        _ = AXUIElementSetAttributeValue(
-            targetElement,
-            kAXFocusedAttribute as CFString,
-            kCFBooleanTrue
-        )
-        return targetElement
-    }
-
-    private func focusedUIElement() -> AXUIElement? {
-        let systemWide = AXUIElementCreateSystemWide()
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            systemWide,
-            kAXFocusedUIElementAttribute as CFString,
-            &value
-        ) == .success
-        else { return nil }
-        return value as! AXUIElement?
-    }
-
-    private func isTextInput(_ element: AXUIElement) -> Bool {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            element,
-            kAXRoleAttribute as CFString,
-            &value
-        ) == .success,
-        let role = value as? String
-        else { return false }
-        return role == kAXTextAreaRole ||
-            role == kAXTextFieldRole ||
-            role == kAXComboBoxRole
-    }
-
-    private func pid(of element: AXUIElement) -> pid_t {
-        var value: pid_t = 0
-        AXUIElementGetPid(element, &value)
-        return value
-    }
-
-    private func postKey(
-        _ code: Int,
-        flags: CGEventFlags = []
-    ) -> Bool {
-        guard let down = CGEvent(
-            keyboardEventSource: nil,
-            virtualKey: CGKeyCode(code),
-            keyDown: true
-        ),
-        let up = CGEvent(
-            keyboardEventSource: nil,
-            virtualKey: CGKeyCode(code),
-            keyDown: false
-        )
-        else { return false }
-        down.flags = flags
-        up.flags = flags
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
-        return true
-    }
-
-    private func snapshotPasteboard(
-        _ pasteboard: NSPasteboard
-    ) -> [NSPasteboardItem] {
-        (pasteboard.pasteboardItems ?? []).map { source in
-            let copy = NSPasteboardItem()
-            for type in source.types {
-                if let data = source.data(forType: type) {
-                    copy.setData(data, forType: type)
-                }
-            }
-            return copy
-        }
-    }
-
-    private func restorePasteboard(
-        _ pasteboard: NSPasteboard,
-        snapshot: [NSPasteboardItem]
-    ) {
-        pasteboard.clearContents()
-        if !snapshot.isEmpty {
-            pasteboard.writeObjects(snapshot)
-        }
-    }
-
     private func reset() {
         stopAudioInput()
         externalPCMInput?.stopAccepting()
         phase = .idle
-        targetApplication = nil
-        targetElement = nil
+        target = nil
         transcript = ""
         pendingFinish = nil
         resultsTask?.cancel()

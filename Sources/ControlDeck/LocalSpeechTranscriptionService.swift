@@ -2,7 +2,6 @@ import ApplicationServices
 import AppKit
 import AudioToolbox
 @preconcurrency import AVFoundation
-import Carbon.HIToolbox
 @preconcurrency import FluidAudio
 import Foundation
 import OSLog
@@ -25,7 +24,7 @@ enum LocalSpeechTranscriptionError: LocalizedError {
         case .microphonePermissionDenied:
             "Enable ControlDeck in Privacy & Security → Microphone"
         case .noTextField:
-            "Focus a text field before starting dictation"
+            "Focus the app where dictated text should be inserted"
         case let .modelNotReady(name):
             "\(name) is not ready yet"
         case .microphoneUnavailable:
@@ -96,7 +95,7 @@ final class LocalSpeechTranscriptionService: ObservableObject {
     private var lastLoggedDownloadPercentage:
         [GeneralDictationEngine: Int] = [:]
     private var activeEngine: GeneralDictationEngine?
-    private var target: LocalSpeechTextInsertionTarget?
+    private var target: SpeechTextInsertionTarget?
     private var audioEngine: AVAudioEngine?
     private var audioContinuation:
         AsyncStream<AudioPacket>.Continuation?
@@ -259,6 +258,7 @@ final class LocalSpeechTranscriptionService: ObservableObject {
         engine: GeneralDictationEngine,
         inputDeviceID: AudioObjectID?,
         usesExternalPCM: Bool,
+        target: SpeechTextInsertionTarget? = nil,
         contextualStrings: [String] = [],
         completion: @escaping (
             Result<Void, LocalSpeechTranscriptionError>
@@ -283,7 +283,7 @@ final class LocalSpeechTranscriptionService: ObservableObject {
             completion(.failure(.accessibilityRequired))
             return false
         }
-        guard let target = LocalSpeechTextInsertionTarget.capture() else {
+        guard let target = target ?? SpeechTextInsertionTarget.capture() else {
             completion(.failure(.noTextField))
             return false
         }
@@ -1242,165 +1242,6 @@ private actor LocalSpeechWorker {
         ) else { return }
         for entry in entries where entry.pathExtension == "mlpackage" {
             try? FileManager.default.removeItem(at: entry)
-        }
-    }
-}
-
-@MainActor
-private final class LocalSpeechTextInsertionTarget {
-    private let application: NSRunningApplication
-    private var element: AXUIElement
-
-    private init(
-        application: NSRunningApplication,
-        element: AXUIElement
-    ) {
-        self.application = application
-        self.element = element
-    }
-
-    static func capture() -> LocalSpeechTextInsertionTarget? {
-        guard let application = NSWorkspace.shared.frontmostApplication,
-              let focused = focusedUIElement(),
-              isTextInput(focused)
-        else { return nil }
-        return LocalSpeechTextInsertionTarget(
-            application: application,
-            element: focused
-        )
-    }
-
-    func insert(
-        _ text: String
-    ) -> AppleSpeechTranscriptionResult.InsertionMethod? {
-        guard let target = currentElement() else { return nil }
-        if replaceSelection(in: target, with: text) {
-            return .accessibility
-        }
-        guard paste(text) else { return nil }
-        return .pasteboard
-    }
-
-    private func currentElement() -> AXUIElement? {
-        if let focused = Self.focusedUIElement(),
-           Self.isTextInput(focused),
-           Self.pid(of: focused) == application.processIdentifier {
-            element = focused
-            return focused
-        }
-        _ = application.activate(options: [.activateAllWindows])
-        _ = AXUIElementSetAttributeValue(
-            element,
-            kAXFocusedAttribute as CFString,
-            kCFBooleanTrue
-        )
-        return element
-    }
-
-    private func replaceSelection(
-        in element: AXUIElement,
-        with text: String
-    ) -> Bool {
-        var settable = DarwinBoolean(false)
-        guard AXUIElementIsAttributeSettable(
-            element,
-            kAXSelectedTextAttribute as CFString,
-            &settable
-        ) == .success,
-        settable.boolValue
-        else { return false }
-        return AXUIElementSetAttributeValue(
-            element,
-            kAXSelectedTextAttribute as CFString,
-            text as CFString
-        ) == .success
-    }
-
-    private func paste(_ text: String) -> Bool {
-        let pasteboard = NSPasteboard.general
-        let snapshot = (pasteboard.pasteboardItems ?? []).map { source in
-            let copy = NSPasteboardItem()
-            for type in source.types {
-                if let data = source.data(forType: type) {
-                    copy.setData(data, forType: type)
-                }
-            }
-            return copy
-        }
-        pasteboard.clearContents()
-        guard pasteboard.setString(text, forType: .string),
-              postPaste()
-        else {
-            restorePasteboard(pasteboard, snapshot: snapshot)
-            return false
-        }
-        let changeCount = pasteboard.changeCount
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            if pasteboard.changeCount == changeCount {
-                self.restorePasteboard(pasteboard, snapshot: snapshot)
-            }
-        }
-        return true
-    }
-
-    private static func focusedUIElement() -> AXUIElement? {
-        let systemWide = AXUIElementCreateSystemWide()
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            systemWide,
-            kAXFocusedUIElementAttribute as CFString,
-            &value
-        ) == .success
-        else { return nil }
-        return value as! AXUIElement?
-    }
-
-    private static func isTextInput(_ element: AXUIElement) -> Bool {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            element,
-            kAXRoleAttribute as CFString,
-            &value
-        ) == .success,
-        let role = value as? String
-        else { return false }
-        return role == kAXTextAreaRole ||
-            role == kAXTextFieldRole ||
-            role == kAXComboBoxRole
-    }
-
-    private static func pid(of element: AXUIElement) -> pid_t {
-        var value: pid_t = 0
-        AXUIElementGetPid(element, &value)
-        return value
-    }
-
-    private func postPaste() -> Bool {
-        guard let down = CGEvent(
-            keyboardEventSource: nil,
-            virtualKey: CGKeyCode(kVK_ANSI_V),
-            keyDown: true
-        ),
-        let up = CGEvent(
-            keyboardEventSource: nil,
-            virtualKey: CGKeyCode(kVK_ANSI_V),
-            keyDown: false
-        )
-        else { return false }
-        down.flags = .maskCommand
-        up.flags = .maskCommand
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
-        return true
-    }
-
-    private func restorePasteboard(
-        _ pasteboard: NSPasteboard,
-        snapshot: [NSPasteboardItem]
-    ) {
-        pasteboard.clearContents()
-        if !snapshot.isEmpty {
-            pasteboard.writeObjects(snapshot)
         }
     }
 }

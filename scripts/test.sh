@@ -66,6 +66,8 @@ echo "PASS: Codex customization security boundaries"
 
 CONTROLLER_SERVICE="$ROOT/Sources/ControlDeck/DualSenseControllerService.swift"
 SPEECH_SERVICE="$ROOT/Sources/ControlDeck/AppleSpeechTranscriptionService.swift"
+SPEECH_TARGET="$ROOT/Sources/ControlDeck/SpeechTextInsertionTarget.swift"
+DICTATION_FOCUS_GUARD="$ROOT/Sources/ControlDeck/DictationFocusGuard.swift"
 BUILD_APP="$ROOT/scripts/build-app.sh"
 BUILD_AND_RUN="$ROOT/script/build_and_run.sh"
 PACKAGE_RELEASE="$ROOT/scripts/package-notarized-release.sh"
@@ -127,6 +129,20 @@ fi
 if ! grep -q 'for element in gamepad.allElements' "$CONTROLLER_SERVICE"
 then
   print -u2 "FAIL: analogue controller elements can still trigger system gestures"
+  exit 1
+fi
+
+if ! grep -q 'reinforceSystemGestureSuppression' "$CONTROLLER_SERVICE" ||
+  ! grep -q 'com.apple.games' "$DICTATION_FOCUS_GUARD"
+then
+  print -u2 "FAIL: Bluetooth dictation can lose focus to macOS Games"
+  exit 1
+fi
+
+if ! grep -q 'accessibility-opaque window' "$SPEECH_TARGET" ||
+  ! grep -q 'target: SpeechTextInsertionTarget' "$SPEECH_SERVICE"
+then
+  print -u2 "FAIL: dictation rejects editors without a named AX text role"
   exit 1
 fi
 

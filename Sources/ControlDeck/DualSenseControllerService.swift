@@ -226,20 +226,46 @@ final class DualSenseControllerService: ObservableObject {
     @discardableResult
     func setBluetoothMicrophoneCapture(_ active: Bool) -> Bool {
         microphoneDrainGeneration += 1
+        let generation = microphoneDrainGeneration
         if active {
+            reinforceSystemGestureSuppression()
             quiesceTransientInputForMicrophone()
             microphoneInputGate.beginCapture()
             let opened = hidService.setBluetoothMicrophoneCapture(true)
             if !opened {
                 microphoneInputGate.forceOpen()
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    [weak self] in
+                    guard let self,
+                          self.microphoneDrainGeneration == generation,
+                          self.microphoneInputGate.isSuppressed
+                    else { return }
+                    self.reinforceSystemGestureSuppression()
+                }
             }
             return opened
         }
 
         microphoneInputGate.beginDrain()
         let closed = hidService.setBluetoothMicrophoneCapture(false)
-        scheduleMicrophoneDrainChecks(generation: microphoneDrainGeneration)
+        scheduleMicrophoneDrainChecks(generation: generation)
         return closed
+    }
+
+    /// Reassert ownership immediately before Bluetooth audio changes the HID
+    /// report shape. Some macOS releases reset a controller element's preferred
+    /// gesture handling after profile or transport activity.
+    func reinforceSystemGestureSuppression() {
+        guard let controller else { return }
+        for element in controller.physicalInputProfile.allElements {
+            element.preferredSystemGestureState = .disabled
+        }
+        if let gamepad = controller.extendedGamepad {
+            for element in gamepad.allElements {
+                element.preferredSystemGestureState = .disabled
+            }
+        }
     }
 
     var lastBluetoothMicrophoneResult: String {
@@ -373,6 +399,7 @@ final class DualSenseControllerService: ObservableObject {
         for element in gamepad.allElements {
             element.preferredSystemGestureState = .disabled
         }
+        reinforceSystemGestureSuppression()
 
         bind(gamepad.buttonA, name: "Cross", input: .cross)
         bind(gamepad.buttonB, name: "Circle", input: .circle)

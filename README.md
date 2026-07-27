@@ -67,6 +67,9 @@ in their own context.
 
 - **Tap or hold L2 to talk anywhere.** Focus any text field, then tap for
   hands-free capture or hold it like a walkie-talkie and release when done.
+  Native fields receive text directly; editors that hide their text surface
+  from macOS Accessibility, including Sublime Text, use a clipboard-preserving
+  paste into the app that was focused when dictation began.
 - **The controller reflects Codex state.** Light and haptics make thinking,
   completion and attention states feel immediate.
 - **Options is a profile wheel.** Hold it, point the left stick toward one of

@@ -64,6 +64,7 @@ final class AppModel: ObservableObject {
 
     private let hud = HUDController()
     private let controllerOverlay = ControllerOverlayController()
+    private let dictationFocusGuard = DictationFocusGuard()
     private var started = false
     private var lastStates: [String: CodexTaskState] = [:]
     private var accessibilityObserver: NSObjectProtocol?
@@ -1258,6 +1259,17 @@ final class AppModel: ObservableObject {
                 return
             }
 
+            guard let insertionTarget =
+                SpeechTextInsertionTarget.capture()
+            else {
+                feedbackFailure(
+                    "Focus the app where dictated text should be inserted"
+                )
+                return
+            }
+            dictationFocusGuard.begin(
+                targetApplication: insertionTarget.targetApplication
+            )
             let requestedTransport = controller.transport
             let requestedEngine = generalDictationEngine
             let usesControllerMicrophone =
@@ -1278,11 +1290,14 @@ final class AppModel: ObservableObject {
                     "Preparing the wireless microphone for \(requestedEngine.label)"
                 audio.removeCodexMicrophone()
                 guard bluetoothMicrophone.startCapture() else {
+                    dictationFocusGuard.end()
                     feedbackFailure(bluetoothMicrophone.lastResult)
                     return
                 }
+                controller.reinforceSystemGestureSuppression()
                 guard controller.setBluetoothMicrophoneCapture(true) else {
                     bluetoothMicrophone.stopCapture()
+                    dictationFocusGuard.end()
                     feedbackFailure(controller.lastBluetoothMicrophoneResult)
                     return
                 }
@@ -1310,6 +1325,7 @@ final class AppModel: ObservableObject {
                     engine: requestedEngine,
                     inputDeviceID: inputDeviceID,
                     usesExternalPCM: usesExternalPCM,
+                    target: insertionTarget,
                     contextualStrings: speechContextualStrings()
                 ) { [weak self] result in
                     guard let self,
@@ -1339,6 +1355,7 @@ final class AppModel: ObservableObject {
                                 .microphoneSampleRate
                         )
                         : nil,
+                    target: insertionTarget,
                     contextualStrings: speechContextualStrings()
                 ) { [weak self] result in
                     guard let self,
@@ -1519,6 +1536,7 @@ final class AppModel: ObservableObject {
                     self.universalDictationTransport = nil
                     switch result {
                     case let .success(transcription):
+                        self.dictationFocusGuard.end()
                         let fallbackDetail = transcription.usedFallback
                             ? "Live transcription recovered with \(transcription.engineUsed.engineName)"
                             : transcription.insertionMethod == .accessibility
@@ -1535,6 +1553,7 @@ final class AppModel: ObservableObject {
                         )
                         self.controller.playHaptic(.success)
                     case let .failure(error):
+                        self.dictationFocusGuard.end()
                         self.feedbackFailure(error.localizedDescription)
                     }
                     self.updateAggregateState()
@@ -1553,6 +1572,7 @@ final class AppModel: ObservableObject {
                     self.universalTranscriberReady = false
                     self.stopVoiceCaptureResources(for: transport)
                     self.universalDictationTransport = nil
+                    self.dictationFocusGuard.end()
                     self.feedbackFailure(
                         "\(engine.label) could not stop cleanly"
                     )
@@ -1581,6 +1601,7 @@ final class AppModel: ObservableObject {
                 self.universalDictationTransport = nil
                 switch result {
                 case let .success(transcription):
+                    self.dictationFocusGuard.end()
                     self.lastAction =
                         "Apple transcript inserted into the focused text field"
                     self.hud.show(
@@ -1595,6 +1616,7 @@ final class AppModel: ObservableObject {
                     )
                     self.controller.playHaptic(.success)
                 case let .failure(error):
+                    self.dictationFocusGuard.end()
                     self.feedbackFailure(error.localizedDescription)
                 }
                 self.updateAggregateState()
@@ -1615,6 +1637,7 @@ final class AppModel: ObservableObject {
                 self.feedbackFailure(
                     "Apple SpeechTranscriber could not stop cleanly"
                 )
+                self.dictationFocusGuard.end()
             }
         }
 
@@ -1635,6 +1658,7 @@ final class AppModel: ObservableObject {
         universalTranscriberReady = false
         universalTranscriptionStopPending = false
         universalDictationProvider = nil
+        dictationFocusGuard.end()
         if let transport = universalDictationTransport {
             stopVoiceCaptureResources(for: transport)
         }
@@ -1811,6 +1835,10 @@ final class AppModel: ObservableObject {
             pointer.stop()
             touchpad.cancel()
             let requestedTransport = controller.transport
+            dictationFocusGuard.begin(
+                targetApplication:
+                    NSWorkspace.shared.frontmostApplication
+            )
             if requestedTransport == .usb, audio.controllerAudioAvailable {
                 lastAction = "Preparing DualSense microphone"
                 guard audio.ensureCodexMicrophone() else {
@@ -1830,6 +1858,7 @@ final class AppModel: ObservableObject {
                     )
                     return
                 }
+                controller.reinforceSystemGestureSuppression()
                 guard controller.setBluetoothMicrophoneCapture(true) else {
                     bluetoothMicrophone.stopCapture()
                     failNativeDictation(
@@ -1888,6 +1917,7 @@ final class AppModel: ObservableObject {
                 return
             }
             stopVoiceCaptureResources(for: completedTransport)
+            dictationFocusGuard.end()
             showTranscribingState()
         }
     }
@@ -1912,6 +1942,7 @@ final class AppModel: ObservableObject {
             self.voiceStopPending = false
             let stopped = self.automation.stopDictationAndInsert()
             self.bluetoothMicrophone.stopCapture()
+            self.dictationFocusGuard.end()
             guard stopped else {
                 self.feedbackFailure(self.automation.lastResult)
                 self.updateAggregateState()
@@ -1994,6 +2025,7 @@ final class AppModel: ObservableObject {
         voiceCaptureMode = nil
         voiceCaptureTransport = nil
         stopVoiceCaptureResources(for: failedTransport)
+        dictationFocusGuard.end()
         feedbackFailure(message)
         updateAggregateState()
     }
@@ -2118,6 +2150,7 @@ final class AppModel: ObservableObject {
         voiceCaptureMode = nil
         voiceCaptureTransport = nil
         stopVoiceCaptureResources(for: capturedTransport)
+        dictationFocusGuard.end()
         let stopped = automation.stopDictationAndInsert()
         lastAction = stopped
             ? "\(reason); dictation stopped"
@@ -2152,6 +2185,7 @@ final class AppModel: ObservableObject {
             _ = appleSpeechTranscriber.cancel()
         }
         universalDictationProvider = nil
+        dictationFocusGuard.end()
         hud.dismiss()
         lastAction = "\(reason); transcription stopped"
         updateAggregateState()
@@ -2189,6 +2223,7 @@ final class AppModel: ObservableObject {
             _ = automation.cancelAppSwitcher()
         }
         controller.stop()
+        dictationFocusGuard.end()
         bluetoothMicrophone.teardown()
         audio.removeCodexMicrophone()
     }
